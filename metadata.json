@@ -1,0 +1,6 @@
+{
+  "name": "WebSwing - 3D Web Swing Simulator",
+  "description": "A high-performance 3D web swinging physics simulator through a procedural city with dynamic pendulum physics, force vectors, and game modes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
