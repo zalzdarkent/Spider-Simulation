@@ -934,9 +934,51 @@ export class WebSwingScene {
 
     const isAttached = this.physics.isAttached && Boolean(this.physics.anchorPoint);
     const isGrounded = this.physics.isOnGround || this.physics.isOnRoof;
+    const isClimbing = this.physics.isClimbing;
     const isSprinting = Boolean(input.sprint || input.reelIn || (hasInput && horizSpeed > 14));
 
-    if (isAttached && this.physics.anchorPoint) {
+    if (isClimbing) {
+      // -------------------------------------------------------------
+      // STATE 0: WALL CLIMBING (Spider-Man's iconic wall-crawl pose)
+      // -------------------------------------------------------------
+      // Face the wall
+      const wallN = this.physics.wallNormal;
+      if (wallN.lengthSq() > 0.01) {
+        const climbYaw = Math.atan2(-wallN.x, -wallN.z);
+        this.rotateCharacterFacing(climbYaw, 20.0 * dt);
+      }
+
+      // Wall-crawl body: lean into wall, slight forward crouch
+      this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.55, 0.3);
+      this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
+      this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
+      this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.3, 0.3);
+
+      // Spider-Man climb cycle — alternate arms/legs for crawling motion
+      const climbCycle = Math.sin(performance.now() * 0.005) * (isSprinting ? 1.4 : 0.9);
+      const climbCycleSlow = Math.sin(performance.now() * 0.004);
+
+      // Arms spread wide and forward, gripping the wall
+      this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, -1.1 + climbCycle * 0.3, 0.3);
+      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, -1.1 - climbCycle * 0.3, 0.3);
+      this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.95, 0.3);
+      this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.95, 0.3);
+      this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.35 + climbCycle * 0.2, 0.3);
+      this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.35 - climbCycle * 0.2, 0.3);
+
+      // Legs: spread wide and bent, clinging to wall
+      this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, -0.65 + climbCycleSlow * 0.4, 0.3);
+      this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.65 - climbCycleSlow * 0.4, 0.3);
+      this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.55, 0.3);
+      this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.55, 0.3);
+      this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.80, 0.3);
+      this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.80, 0.3);
+
+      // Head looking upward along climb direction
+      this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.45, 0.3);
+      this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
+
+    } else if (isAttached && this.physics.anchorPoint) {
       // -------------------------------------------------------------
       // STATE 1: WEB SWINGING (Dynamic Acrobatics & Fluid Pendulum)
       // -------------------------------------------------------------

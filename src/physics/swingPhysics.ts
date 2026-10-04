@@ -43,7 +43,13 @@ export class SwingPhysics {
   public isOnGround: boolean = false;
   public isOnRoof: boolean = false;
   public isWallSliding: boolean = false;
+  public isClimbing: boolean = false;
   public wallNormal: THREE.Vector3 = new THREE.Vector3();
+
+  // Climbing state
+  private climbBuildingIndex: number = -1;
+  private climbWallNormal: THREE.Vector3 = new THREE.Vector3();
+  private jumpedOffSurface: boolean = false; // Prevents immediate re-land after jumping
 
   // Metrics & Game feel
   public streakCount: number = 0;
@@ -83,6 +89,9 @@ export class SwingPhysics {
     this.isOnGround = false;
     this.isOnRoof = false;
     this.isWallSliding = false;
+    this.isClimbing = false;
+    this.climbBuildingIndex = -1;
+    this.jumpedOffSurface = false;
     this.streakCount = 0;
     this.groundlessDistance = 0;
     this.lastPositionForDist.copy(this.position);
@@ -163,7 +172,7 @@ export class SwingPhysics {
     this.prevJumpInput = Boolean(input.jump);
 
     // Update groundless distance tracking
-    if (!this.isOnGround && !this.isOnRoof) {
+    if (!this.isOnGround && !this.isOnRoof && !this.isClimbing) {
       const horizontalDist = Math.hypot(
         this.position.x - this.lastPositionForDist.x,
         this.position.z - this.lastPositionForDist.z
@@ -272,8 +281,83 @@ export class SwingPhysics {
     } else {
       this.tensionVector.set(0, 0, 0);
 
-      // Aerial glide / aerial steering when free falling
-      if (!this.isOnGround && !this.isOnRoof) {
+      if (this.isClimbing) {
+        // ---------------------------------------------------------------
+        // WALL CLIMBING STATE: Spider-Man sticks to vertical building faces
+        // ---------------------------------------------------------------
+        const isSprinting = Boolean(input.sprint);
+
+        // Compute tangent directions along the wall surface
+        // wallNormal is already set from last collision resolution
+        const up = new THREE.Vector3(0, 1, 0);
+        // Right tangent along wall surface
+        const wallRight = new THREE.Vector3().crossVectors(this.climbWallNormal, up).normalize();
+        // Up tangent along wall surface
+        const wallUp = new THREE.Vector3().crossVectors(wallRight, this.climbWallNormal).normalize();
+
+        // Flatten camera forward onto the wall's tangent plane for controls
+        const flatForward = this._tempVec.set(cameraForward.x, 0, cameraForward.z).normalize();
+        const fwdAlongWallUp = flatForward.dot(wallUp);
+        const fwdAlongWallRight = flatForward.dot(wallRight);
+
+        // Climbing velocity: zero out towards/away from wall, keep tangential
+        this.velocity.set(0, 0, 0); // Reset then apply wall-clamped movement
+
+        const climbSpeed = isSprinting ? 18.0 : 9.0;
+
+        if (input.forward) {
+          // Climb upward primarily
+          this.velocity.addScaledVector(wallUp, climbSpeed * Math.abs(fwdAlongWallUp));
+          this.velocity.addScaledVector(wallRight, climbSpeed * fwdAlongWallRight);
+          // If camera is facing up, climb straight up
+          if (Math.abs(fwdAlongWallUp) < 0.3) {
+            this.velocity.y += climbSpeed;
+          }
+        }
+        if (input.backward) {
+          this.velocity.y -= climbSpeed * 0.7;
+        }
+        if (input.left) {
+          this.velocity.addScaledVector(wallRight, -climbSpeed);
+        }
+        if (input.right) {
+          this.velocity.addScaledVector(wallRight, climbSpeed);
+        }
+
+        // Climbing always goes up when moving forward
+        if (input.forward && this.velocity.y < climbSpeed * 0.5) {
+          this.velocity.y = climbSpeed;
+        }
+
+        // Push gently into the wall to maintain contact
+        this.velocity.addScaledVector(this.climbWallNormal, -1.5);
+
+        // Jump off wall: powerful diagonal launch away from surface
+        if (jumpTriggered) {
+          const jumpPower = isSprinting ? 28.0 : 22.0;
+          // Launch away from wall + upward
+          this.velocity.copy(this.climbWallNormal).multiplyScalar(jumpPower * 0.6);
+          this.velocity.y = jumpPower * 0.85;
+          if (input.forward) {
+            this.velocity.addScaledVector(flatForward, jumpPower * 0.5);
+          }
+          this.isClimbing = false;
+          this.climbBuildingIndex = -1;
+          this.jumpedOffSurface = true;
+          this.hasAirZipped = false;
+          soundEngine.playJump();
+        }
+
+        // Release climbing if pressing backward hard or no forward movement
+        if (!input.forward && !input.left && !input.right && !input.backward) {
+          // Idle on wall: slow slide down
+          this.velocity.y = -1.5;
+        }
+
+      } else if (!this.isOnGround && !this.isOnRoof) {
+        // ---------------------------------------------------------------
+        // AERIAL STATE: Gliding / Steering / Air-Zip
+        // ---------------------------------------------------------------
         const aerialSteerForce = 12.0;
         const flatForward = this._tempVec.set(cameraForward.x, 0, cameraForward.z).normalize();
         if (input.forward) this.velocity.addScaledVector(flatForward, aerialSteerForce * dt);
@@ -288,8 +372,20 @@ export class SwingPhysics {
           this.velocity.y = Math.max(this.velocity.y + 6.0, 8.0);
           soundEngine.playJump();
         }
+
+        // Detect wall: if pressing into a building wall while airborne, start climbing
+        if (this.isWallSliding && !this.jumpedOffSurface && (input.forward || input.left || input.right)) {
+          this.isClimbing = true;
+          this.climbWallNormal.copy(this.wallNormal);
+          this.climbBuildingIndex = -1; // Will be resolved in handleCollisions
+          this.velocity.set(0, 0, 0);
+          soundEngine.playLanding();
+        }
+
       } else {
-        // Ground / Rooftop locomotion (Walking vs Superhero Sprinting)
+        // ---------------------------------------------------------------
+        // GROUND / ROOFTOP LOCOMOTION
+        // ---------------------------------------------------------------
         const isSprinting = Boolean(input.sprint || input.reelIn);
         const moveSpeed = isSprinting ? 28.0 : 12.0;
         const flatForward = this._tempVec.set(cameraForward.x, 0, cameraForward.z).normalize();
@@ -313,14 +409,22 @@ export class SwingPhysics {
           if (input.right) this.velocity.addScaledVector(cameraRight, forwardBoost);
           this.isOnGround = false;
           this.isOnRoof = false;
+          this.jumpedOffSurface = true; // Prevent immediate re-land
           this.hasAirZipped = false;
           soundEngine.playJump();
         }
       }
     }
 
-    // 3. Gravity Acceleration
-    this.velocity.y -= this.config.gravity * dt;
+    // 3. Gravity Acceleration (suppressed while wall-climbing — Spider-Man's adhesion negates gravity on vertical surfaces)
+    if (!this.isClimbing) {
+      this.velocity.y -= this.config.gravity * dt;
+    }
+
+    // Clear jump guard once velocity turns downward (player is falling again)
+    if (this.jumpedOffSurface && this.velocity.y < 0) {
+      this.jumpedOffSurface = false;
+    }
 
     // 4. Aerodynamic Drag (Quadratic air resistance)
     const currentSpeed = this.velocity.length();
@@ -353,6 +457,10 @@ export class SwingPhysics {
     this.isOnGround = false;
     this.isOnRoof = false;
     this.isWallSliding = false;
+
+    // Reset climb state each frame - will be re-confirmed by wall contact below
+    const wasClimbing = this.isClimbing;
+    this.isClimbing = false;
 
     // 1. Water or Ground floor collision
     const isWater = obstacles?.isWaterAt && obstacles.isWaterAt(this.position.x, this.position.z);
@@ -414,15 +522,16 @@ export class SwingPhysics {
         continue;
       }
 
-      // Check rooftop landing
+      // Check rooftop landing — only if NOT recently jumped and coming from above
       const isAboveRoof = this.position.y >= box.max.y;
-      if (isAboveRoof && playerFeetY <= box.max.y + 0.3) {
+      if (isAboveRoof && playerFeetY <= box.max.y + 0.3 && !this.jumpedOffSurface) {
         if (this.velocity.y < -4) {
           soundEngine.playLanding();
         }
         this.position.y = box.max.y + playerHeight / 2;
         this.velocity.y = 0;
         this.isOnRoof = true;
+        this.isClimbing = false;
         this.hasAirZipped = false;
         this.velocity.x *= 0.94;
         this.velocity.z *= 0.94;
@@ -436,28 +545,44 @@ export class SwingPhysics {
       const dzMax = Math.abs(this.position.z - box.max.z);
 
       const minPenetration = Math.min(dxMin, dxMax, dzMin, dzMax);
+      let hitNormal = new THREE.Vector3();
 
       if (minPenetration === dxMin) {
         this.position.x = box.min.x - playerRadius;
-        this.wallNormal.set(-1, 0, 0);
+        hitNormal.set(-1, 0, 0);
         if (this.velocity.x > 0) this.velocity.x = 0;
       } else if (minPenetration === dxMax) {
         this.position.x = box.max.x + playerRadius;
-        this.wallNormal.set(1, 0, 0);
+        hitNormal.set(1, 0, 0);
         if (this.velocity.x < 0) this.velocity.x = 0;
       } else if (minPenetration === dzMin) {
         this.position.z = box.min.z - playerRadius;
-        this.wallNormal.set(0, 0, -1);
+        hitNormal.set(0, 0, -1);
         if (this.velocity.z > 0) this.velocity.z = 0;
       } else {
         this.position.z = box.max.z + playerRadius;
-        this.wallNormal.set(0, 0, 1);
+        hitNormal.set(0, 0, 1);
         if (this.velocity.z < 0) this.velocity.z = 0;
       }
 
+      this.wallNormal.copy(hitNormal);
       this.isWallSliding = true;
-      // Slight wall friction
-      this.velocity.y *= 0.98;
+
+      // Maintain climbing state: if we were climbing this building, keep climbing
+      if (wasClimbing && this.climbBuildingIndex === i) {
+        this.isClimbing = true;
+        this.climbWallNormal.copy(hitNormal);
+      } else if (wasClimbing && this.climbBuildingIndex === -1) {
+        // Climbing without specific building index — use wall normal match
+        this.isClimbing = true;
+        this.climbWallNormal.copy(hitNormal);
+        this.climbBuildingIndex = i;
+      }
+
+      // Wall friction when sliding (not climbing)
+      if (!this.isClimbing) {
+        this.velocity.y *= 0.98; // Slight slowdown when sliding down wall
+      }
     }
 
     // 3. Vehicle collisions (Moving traffic and parked cars)
