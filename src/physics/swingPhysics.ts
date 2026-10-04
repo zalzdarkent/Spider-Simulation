@@ -50,6 +50,9 @@ export class SwingPhysics {
   private _up: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
   private _tempVec: THREE.Vector3 = new THREE.Vector3();
 
+  public hasAirZipped: boolean = false;
+  private prevJumpInput: boolean = false;
+
   constructor(public config: PhysicsConfig) {
     this.lastPositionForDist.copy(this.position);
   }
@@ -68,6 +71,8 @@ export class SwingPhysics {
     this.groundlessDistance = 0;
     this.lastPositionForDist.copy(this.position);
     this.hasBoostedThisSwing = false;
+    this.hasAirZipped = false;
+    this.prevJumpInput = false;
   }
 
   public attachWeb(anchor: THREE.Vector3) {
@@ -75,6 +80,7 @@ export class SwingPhysics {
     this.isAttached = true;
     this.attachStartTime = performance.now();
     this.hasBoostedThisSwing = false;
+    this.hasAirZipped = false;
 
     // Initial rope length is distance to anchor
     const dist = this.position.distanceTo(anchor);
@@ -130,9 +136,14 @@ export class SwingPhysics {
     const subSteps = Math.max(1, Math.ceil(effectiveDelta / 0.008));
     const dt = effectiveDelta / subSteps;
 
+    const jumpTriggered = Boolean(input.jump && !this.prevJumpInput);
+
     for (let step = 0; step < subSteps; step++) {
-      this.subStep(dt, input, cameraForward, cameraRight, buildings);
+      this.subStep(dt, input, cameraForward, cameraRight, buildings, step === 0 && jumpTriggered);
     }
+
+    // Save jump input state for edge-triggered leap detection
+    this.prevJumpInput = Boolean(input.jump);
 
     // Update groundless distance tracking
     if (!this.isOnGround && !this.isOnRoof) {
@@ -160,7 +171,8 @@ export class SwingPhysics {
     input: PlayerInput,
     cameraForward: THREE.Vector3,
     cameraRight: THREE.Vector3,
-    buildings: BuildingData[]
+    buildings: BuildingData[],
+    jumpTriggered: boolean
   ) {
     // 1. Gravity Force Vector
     this.gravityVector.set(0, -this.config.gravity * this.config.playerMass, 0);
@@ -200,15 +212,11 @@ export class SwingPhysics {
           // Gravity component along the rope tension:
           const gravityRadialMag = Math.max(0, -this.gravityVector.dot(this._radialVec));
 
-          // Total tension force pulling towards anchor:
+          // Total tension force pulling towards anchor (for telemetry and STEM vector visualization):
           const totalTensionMag = (centripetalMag + gravityRadialMag) * this.config.ropeStiffness;
           this.tensionVector.copy(this._radialVec).multiplyScalar(-totalTensionMag);
 
-          // Apply centripetal acceleration
-          const centripetalAcc = totalTensionMag / this.config.playerMass;
-          this.velocity.addScaledVector(this._radialVec, -centripetalAcc * dt);
-
-          // Position projection to enforce constraint boundary
+          // Position projection strictly enforces the constraint boundary with zero jitter
           const maxAllowedDist = this.ropeLength;
           if (currentDist > maxAllowedDist) {
             this.position.copy(this.anchorPoint).addScaledVector(this._radialVec, maxAllowedDist);
@@ -233,6 +241,16 @@ export class SwingPhysics {
       if (input.right) {
         this.velocity.addScaledVector(cameraRight, steerForce * dt);
       }
+
+      // Jump while attached = SUPER JUMP RELEASE!
+      if (jumpTriggered) {
+        const swingDir = this.velocity.clone().normalize();
+        this.releaseWeb();
+        this.velocity.y = Math.max(this.velocity.y + 11.0, 16.0);
+        this.velocity.addScaledVector(swingDir, 10.0);
+        soundEngine.playJump();
+        this.hasAirZipped = false;
+      }
     } else {
       this.tensionVector.set(0, 0, 0);
 
@@ -244,6 +262,14 @@ export class SwingPhysics {
         if (input.backward) this.velocity.addScaledVector(flatForward, -aerialSteerForce * dt);
         if (input.left) this.velocity.addScaledVector(cameraRight, -aerialSteerForce * dt);
         if (input.right) this.velocity.addScaledVector(cameraRight, aerialSteerForce * dt);
+
+        // Mid-air Web Zip / Double Leap
+        if (jumpTriggered && !this.hasAirZipped) {
+          this.hasAirZipped = true;
+          this.velocity.addScaledVector(flatForward, 18.0);
+          this.velocity.y = Math.max(this.velocity.y + 6.0, 8.0);
+          soundEngine.playJump();
+        }
       } else {
         // Ground / Rooftop movement
         const moveSpeed = 16.0;
@@ -256,11 +282,17 @@ export class SwingPhysics {
         if (input.left) this.velocity.addScaledVector(cameraRight, -moveSpeed * 3 * dt);
         if (input.right) this.velocity.addScaledVector(cameraRight, moveSpeed * 3 * dt);
 
-        if (input.jump) {
-          this.velocity.y = 16.0;
+        // Ground / Rooftop Superhero Launch Jump
+        if (jumpTriggered) {
+          this.velocity.y = 22.0; // High superhero vertical leap
+          if (input.forward) this.velocity.addScaledVector(flatForward, 10.0);
+          if (input.backward) this.velocity.addScaledVector(flatForward, -10.0);
+          if (input.left) this.velocity.addScaledVector(cameraRight, -10.0);
+          if (input.right) this.velocity.addScaledVector(cameraRight, 10.0);
           this.isOnGround = false;
           this.isOnRoof = false;
-          soundEngine.playWebRelease();
+          this.hasAirZipped = false;
+          soundEngine.playJump();
         }
       }
     }
@@ -308,6 +340,7 @@ export class SwingPhysics {
       this.position.y = playerHeight / 2;
       this.velocity.y = 0;
       this.isOnGround = true;
+      this.hasAirZipped = false;
 
       // Ground friction
       this.velocity.x *= 0.92;
@@ -344,6 +377,7 @@ export class SwingPhysics {
         this.position.y = box.max.y + playerHeight / 2;
         this.velocity.y = 0;
         this.isOnRoof = true;
+        this.hasAirZipped = false;
         this.velocity.x *= 0.94;
         this.velocity.z *= 0.94;
         return;

@@ -2,9 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { WebSwingScene } from './renderer/WebSwingScene';
 import { HUD } from './components/HUD';
 import { EnergyGraph } from './components/EnergyGraph';
-import { PhysicsPanel } from './components/PhysicsPanel';
-import { SettingsModal } from './components/SettingsModal';
-import { TutorialModal } from './components/TutorialModal';
+import { SettingsModal, SettingsTab } from './components/SettingsModal';
 import { MobileControls } from './components/MobileControls';
 import { PHYSICS_PRESETS, PhysicsConfig, TelemetryData, TimeOfDay, GameMode } from './types/physics';
 import { PlayerInput } from './physics/swingPhysics';
@@ -29,18 +27,19 @@ export default function App() {
   const [isPointerLocked, setIsPointerLocked] = useState<boolean>(false);
   const [aimAssist, setAimAssist] = useState<boolean>(true);
   const [lookSensitivity, setLookSensitivity] = useState<number>(0.0035);
+  const [invertY, setInvertY] = useState<boolean>(false);
   const [toggleSwingMode, setToggleSwingMode] = useState<boolean>(true);
 
   // Visualization toggles
   const [showVectors, setShowVectors] = useState<boolean>(false);
   const [showTrajectory, setShowTrajectory] = useState<boolean>(false);
-  const [showEnergyGraph, setShowEnergyGraph] = useState<boolean>(true);
+  const [showEnergyGraph, setShowEnergyGraph] = useState<boolean>(false);
+  const [hudMode, setHudMode] = useState<'minimal' | 'full'>('minimal');
   const [isMuted, setIsMuted] = useState<boolean>(false);
 
-  // Modals
-  const [isPhysicsOpen, setIsPhysicsOpen] = useState<boolean>(false);
+  // Unified Settings Modal
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
-  const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('controls');
 
   // Telemetry
   const [telemetry, setTelemetry] = useState<TelemetryData>({
@@ -157,6 +156,7 @@ export default function App() {
     });
     scene.aimAssist = aimAssist;
     scene.lookSensitivity = lookSensitivity;
+    scene.invertY = invertY;
     sceneRef.current = scene;
 
     let animId: number;
@@ -207,7 +207,7 @@ export default function App() {
     }
   }, [physicsConfig]);
 
-  // Sync camera mode, vectors, aimAssist, lookSensitivity
+  // Sync camera mode, vectors, aimAssist, lookSensitivity, invertY
   useEffect(() => {
     if (sceneRef.current) {
       sceneRef.current.cameraMode = cameraMode;
@@ -215,8 +215,9 @@ export default function App() {
       sceneRef.current.showTrajectory = showTrajectory;
       sceneRef.current.aimAssist = aimAssist;
       sceneRef.current.lookSensitivity = lookSensitivity;
+      sceneRef.current.invertY = invertY;
     }
-  }, [cameraMode, showVectors, showTrajectory, aimAssist, lookSensitivity]);
+  }, [cameraMode, showVectors, showTrajectory, aimAssist, lookSensitivity, invertY]);
 
   // Toggle Touchpad Mode helper
   const handleToggleTouchpadMode = () => {
@@ -226,6 +227,15 @@ export default function App() {
       setAimAssist(true);
       setToggleSwingMode(true);
       setLookSensitivity(0.0035);
+    }
+  };
+
+  // Open Settings Modal with optional initial tab
+  const handleOpenSettings = (tab: SettingsTab = 'controls') => {
+    setSettingsTab(tab);
+    setIsSettingsOpen(true);
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
     }
   };
 
@@ -280,8 +290,22 @@ export default function App() {
           keyboardCamRef.current.down = true;
           break;
 
-        // Web Shooting & Smart Swing
+        // Jump / Air-Zip / Super Jump Release (Spider-Man Jump System)
         case 'Space':
+        case 'KeyX':
+          e.preventDefault();
+          inputRef.current.jump = true;
+          // In mid-air, if player already air-zipped and is targeting an anchor, Space also acts as web launch
+          {
+            const phys = sceneRef.current?.getPhysics();
+            if (phys && !phys.isOnGround && !phys.isOnRoof && !phys.isAttached && phys.hasAirZipped) {
+              sceneRef.current?.triggerWebShoot();
+              inputRef.current.fireWeb = true;
+            }
+          }
+          break;
+
+        // Web Shooting & Swing (Left Click, F, or Enter)
         case 'KeyF':
         case 'Enter':
           e.preventDefault();
@@ -314,6 +338,16 @@ export default function App() {
           break;
         case 'KeyC':
           setCameraMode((prev) => (prev === 'third_person' ? 'first_person' : 'third_person'));
+          break;
+        case 'Escape':
+        case 'KeyP':
+          setIsSettingsOpen((prev) => {
+            const next = !prev;
+            if (next && document.pointerLockElement) {
+              document.exitPointerLock();
+            }
+            return next;
+          });
           break;
       }
     };
@@ -364,17 +398,19 @@ export default function App() {
           break;
 
         case 'Space':
+        case 'KeyX':
+          inputRef.current.jump = false;
+          break;
+
         case 'KeyF':
         case 'Enter':
           isSpaceDownRef.current = false;
-          // In hold mode (or if held for > 280ms in hybrid mode), release on keyup
           if (!toggleSwingMode) {
             inputRef.current.fireWeb = false;
             sceneRef.current?.triggerWebRelease();
           } else {
             const pressDuration = performance.now() - spacePressTimeRef.current;
             if (pressDuration > 280 && sceneRef.current?.getPhysics().isAttached) {
-              // Long press release
               sceneRef.current?.triggerWebRelease();
               inputRef.current.fireWeb = false;
             }
@@ -394,6 +430,7 @@ export default function App() {
   // Mouse & Touchpad Aim Handlers on Canvas
   const handleMouseDown = (e: React.MouseEvent) => {
     if (e.button === 0) {
+      // Left Click: Tembak Jaring & Berayun
       isMouseDownRef.current = true;
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
 
@@ -402,12 +439,19 @@ export default function App() {
       if (toggleSwingMode) {
         if (isCurrentlyAttached) {
           sceneRef.current?.triggerWebRelease();
+          inputRef.current.fireWeb = false;
         } else {
           sceneRef.current?.triggerWebShoot();
+          inputRef.current.fireWeb = true;
         }
       } else {
+        inputRef.current.fireWeb = true;
         sceneRef.current?.triggerWebShoot();
       }
+    } else if (e.button === 2) {
+      // Right Click: Lompat / Web-Zip / Jump Release
+      e.preventDefault();
+      inputRef.current.jump = true;
     }
   };
 
@@ -434,8 +478,11 @@ export default function App() {
     if (e.button === 0) {
       isMouseDownRef.current = false;
       if (!toggleSwingMode) {
+        inputRef.current.fireWeb = false;
         sceneRef.current?.triggerWebRelease();
       }
+    } else if (e.button === 2) {
+      inputRef.current.jump = false;
     }
   };
 
@@ -514,6 +561,7 @@ export default function App() {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
+        onContextMenu={(e) => e.preventDefault()}
         onWheel={handleWheel}
         onTouchStart={handleTouchCameraStart}
         onTouchMove={handleTouchCameraMove}
@@ -521,7 +569,7 @@ export default function App() {
         className="w-full h-full block cursor-crosshair touch-none"
       />
 
-      {/* Floating HUD */}
+      {/* Floating Minimalist HUD */}
       <HUD
         telemetry={telemetry}
         speedUnit={speedUnit}
@@ -529,20 +577,17 @@ export default function App() {
         gameMode={gameMode}
         ringCount={ringCount}
         totalRings={totalRings}
-        isTouchpadMode={isTouchpadMode}
-        onToggleTouchpadMode={handleToggleTouchpadMode}
-        isPointerLocked={isPointerLocked}
-        onRequestPointerLock={requestPointerLock}
-        onOpenPhysics={() => setIsPhysicsOpen(true)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenTutorial={() => setIsTutorialOpen(true)}
+        hudMode={hudMode}
+        isMuted={isMuted}
+        onToggleMute={handleToggleMute}
+        onOpenSettings={handleOpenSettings}
         onReset={() => {
           sceneRef.current?.resetPosition();
           setRingCount(0);
         }}
       />
 
-      {/* Real-time STEM Energy Graph in bottom-right */}
+      {/* Real-time STEM Energy Graph in bottom-right (optional on HUD) */}
       {showEnergyGraph && (
         <div className="absolute bottom-20 md:bottom-24 right-4 md:right-6 pointer-events-auto z-10 w-72 md:w-80 hidden sm:block">
           <EnergyGraph telemetry={telemetry} />
@@ -595,7 +640,7 @@ export default function App() {
                 WEBSWING
               </h1>
               <p className="text-sm text-slate-300 max-w-md leading-relaxed">
-                Experience web-swinging pendulum physics through a procedural skyscraper canyon. Tuned for mouse, touchpad, and touchscreens.
+                Simulasi fisika pendulum berayun di antara gedung pencakar langit kota metropolitan 3D.
               </p>
             </div>
 
@@ -603,21 +648,21 @@ export default function App() {
             <div className="grid grid-cols-3 gap-3 w-full text-xs">
               <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700/60 flex flex-col items-center gap-1">
                 <span className="font-bold text-sky-400 font-mono">120 Hz</span>
-                <span className="text-slate-400">Pendulum Sim</span>
+                <span className="text-slate-400">Sim Pendulum</span>
               </div>
               <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700/60 flex flex-col items-center gap-1">
-                <span className="font-bold text-amber-400 font-mono">Touchpad</span>
-                <span className="text-slate-400">Magnet Auto-Aim</span>
+                <span className="font-bold text-amber-400 font-mono">Auto-Aim</span>
+                <span className="text-slate-400">Magnet Kunci</span>
               </div>
               <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700/60 flex flex-col items-center gap-1">
-                <span className="font-bold text-emerald-400 font-mono">STEM</span>
-                <span className="text-slate-400">Energy Analysis</span>
+                <span className="font-bold text-emerald-400 font-mono">STEM Hub</span>
+                <span className="text-slate-400">Analisis Energi</span>
               </div>
             </div>
 
-            {/* Touchpad Friendly Notice */}
-            <div className="text-xs text-amber-300/90 font-mono bg-amber-500/10 px-4 py-2.5 rounded-xl border border-amber-500/30 flex items-center justify-center gap-2">
-              <span>💻 Touchpad Ready: Tap [SPACE] to Swing · [Arrow Keys] / [Q][E] to Look!</span>
+            {/* Quick tips notice */}
+            <div className="text-xs text-sky-300/90 font-mono bg-sky-500/10 px-4 py-2.5 rounded-xl border border-sky-500/30 flex items-center justify-center gap-2">
+              <span>💻 [SPASI] Ayun / Lepas · [Mouse/Touchpad] Pandangan · [ESC] Pengaturan</span>
             </div>
 
             <button
@@ -625,22 +670,13 @@ export default function App() {
               className="w-full py-3.5 rounded-xl bg-gradient-to-r from-sky-500 to-cyan-500 hover:from-sky-400 hover:to-cyan-400 text-slate-950 font-bold text-sm transition-all duration-150 shadow-xl shadow-sky-500/25 flex items-center justify-center gap-2 active:scale-[0.98]"
             >
               <Play className="w-4 h-4 fill-slate-950" />
-              <span>Enter The City</span>
+              <span>Mulai Berayun di Kota</span>
             </button>
           </div>
         </div>
       )}
 
-      {/* Physics Tuning Drawer */}
-      {isPhysicsOpen && (
-        <PhysicsPanel
-          config={physicsConfig}
-          onChangeConfig={setPhysicsConfig}
-          onClose={() => setIsPhysicsOpen(false)}
-        />
-      )}
-
-      {/* Settings Modal */}
+      {/* Unified Settings & Information Hub System */}
       {isSettingsOpen && (
         <SettingsModal
           timeOfDay={timeOfDay}
@@ -656,6 +692,8 @@ export default function App() {
           onToggleTrajectory={() => setShowTrajectory((prev) => !prev)}
           showEnergyGraph={showEnergyGraph}
           onToggleEnergyGraph={() => setShowEnergyGraph((prev) => !prev)}
+          hudMode={hudMode}
+          onChangeHudMode={setHudMode}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
           gameMode={gameMode}
@@ -670,14 +708,26 @@ export default function App() {
           onToggleAimAssist={() => setAimAssist((prev) => !prev)}
           lookSensitivity={lookSensitivity}
           onChangeLookSensitivity={setLookSensitivity}
+          invertY={invertY}
+          onToggleInvertY={() => setInvertY((prev) => !prev)}
           toggleSwingMode={toggleSwingMode}
           onToggleSwingMode={() => setToggleSwingMode((prev) => !prev)}
+          isPointerLocked={isPointerLocked}
+          onRequestPointerLock={requestPointerLock}
+          telemetry={telemetry}
+          speedUnit={speedUnit}
+          onToggleSpeedUnit={() => setSpeedUnit((prev) => (prev === 'mph' ? 'mps' : 'mph'))}
+          physicsConfig={physicsConfig}
+          onChangePhysicsConfig={setPhysicsConfig}
+          onResetPhysics={() => setPhysicsConfig(PHYSICS_PRESETS.balanced.config)}
+          onResetPlayer={() => {
+            sceneRef.current?.resetPosition();
+            setRingCount(0);
+          }}
+          initialTab={settingsTab}
           onClose={() => setIsSettingsOpen(false)}
         />
       )}
-
-      {/* Tutorial Modal */}
-      {isTutorialOpen && <TutorialModal onClose={() => setIsTutorialOpen(false)} />}
     </main>
   );
 }

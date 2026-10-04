@@ -26,6 +26,8 @@ export class WebSwingScene {
   private cameraYaw: number = 0;
   private cameraPitch: number = 0.1;
   private cameraDistance: number = 7.5;
+  private currentCamDistance: number = 7.5;
+  private smoothedHeroPos: THREE.Vector3 = new THREE.Vector3(0, 75, 40);
   private cameraTarget: THREE.Vector3 = new THREE.Vector3();
   private baseFOV: number = 68;
 
@@ -50,6 +52,8 @@ export class WebSwingScene {
   private targetReticleMesh: THREE.Group;
   public aimAssist: boolean = true;
   public lookSensitivity: number = 0.0035;
+  public invertY: boolean = false;
+  private runCycleTime: number = 0;
 
   // STEM Visualization
   public showVectors: boolean = false;
@@ -117,12 +121,12 @@ export class WebSwingScene {
     this.characterGroup = this.createHeroCharacter();
     this.scene.add(this.characterGroup);
 
-    // Web rope
+    // Web rope (high-tensile spun silk)
     const lineGeo = new THREE.BufferGeometry();
     const positions = new Float32Array(30 * 3);
     lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     const lineMat = new THREE.LineBasicMaterial({
-      color: 0x38bdf8,
+      color: 0xf8fafc,
       linewidth: 3,
       transparent: true,
       opacity: 0.95,
@@ -131,9 +135,9 @@ export class WebSwingScene {
     this.webLineMesh.frustumCulled = false;
     this.scene.add(this.webLineMesh);
 
-    // Web impact point
-    const impactGeo = new THREE.SphereGeometry(0.6, 12, 12);
-    const impactMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, wireframe: true });
+    // Web impact point (anchored web node)
+    const impactGeo = new THREE.SphereGeometry(0.35, 12, 12);
+    const impactMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     this.webAnchorImpactMesh = new THREE.Mesh(impactGeo, impactMat);
     this.webAnchorImpactMesh.visible = false;
     this.scene.add(this.webAnchorImpactMesh);
@@ -230,74 +234,392 @@ export class WebSwingScene {
   /**
    * Stylized original Web-Slinger Acrobat Hero character model
    */
+  /**
+   * High-Definition Procedural Spider-Man Suit Texture Generator
+   */
+  private createSpiderManTextures() {
+    // 1. Scarlet Red Spider Webbing Texture (512x512)
+    const redCanvas = document.createElement('canvas');
+    redCanvas.width = 512;
+    redCanvas.height = 512;
+    const rCtx = redCanvas.getContext('2d')!;
+
+    // Rich scarlet red gradient
+    const redGrad = rCtx.createLinearGradient(0, 0, 512, 512);
+    redGrad.addColorStop(0, '#e11d48');
+    redGrad.addColorStop(0.5, '#be123c');
+    redGrad.addColorStop(1, '#9f1239');
+    rCtx.fillStyle = redGrad;
+    rCtx.fillRect(0, 0, 512, 512);
+
+    // Micro carbon-fiber suit weave
+    rCtx.fillStyle = 'rgba(0,0,0,0.07)';
+    for (let y = 0; y < 512; y += 4) {
+      for (let x = 0; x < 512; x += 4) {
+        if ((x + y) % 8 === 0) rCtx.fillRect(x, y, 2, 2);
+      }
+    }
+
+    // Spider web lines: Radiating spokes & scalloped concentric arcs
+    rCtx.strokeStyle = 'rgba(15, 23, 42, 0.82)';
+    rCtx.lineWidth = 3.5;
+    rCtx.lineCap = 'round';
+
+    const cx = 256;
+    const cy = 256;
+    const spokes = 12;
+    for (let i = 0; i < spokes; i++) {
+      const angle = (i * Math.PI * 2) / spokes;
+      rCtx.beginPath();
+      rCtx.moveTo(cx, cy);
+      rCtx.lineTo(cx + Math.cos(angle) * 360, cy + Math.sin(angle) * 360);
+      rCtx.stroke();
+    }
+
+    for (let r = 45; r <= 320; r += 45) {
+      for (let i = 0; i < spokes; i++) {
+        const a1 = (i * Math.PI * 2) / spokes;
+        const a2 = ((i + 1) * Math.PI * 2) / spokes;
+        const p1x = cx + Math.cos(a1) * r;
+        const p1y = cy + Math.sin(a1) * r;
+        const p2x = cx + Math.cos(a2) * r;
+        const p2y = cy + Math.sin(a2) * r;
+        const midAngle = (a1 + a2) / 2;
+        const sag = r * 0.88;
+        const cpx = cx + Math.cos(midAngle) * sag;
+        const cpy = cy + Math.sin(midAngle) * sag;
+
+        rCtx.beginPath();
+        rCtx.moveTo(p1x, p1y);
+        rCtx.quadraticCurveTo(cpx, cpy, p2x, p2y);
+        rCtx.stroke();
+      }
+    }
+
+    const redWebMap = new THREE.CanvasTexture(redCanvas);
+    redWebMap.wrapS = THREE.RepeatWrapping;
+    redWebMap.wrapT = THREE.RepeatWrapping;
+    redWebMap.repeat.set(2, 2);
+
+    // 2. Cobalt / Navy Athletic Fabric Texture (256x256)
+    const blueCanvas = document.createElement('canvas');
+    blueCanvas.width = 256;
+    blueCanvas.height = 256;
+    const bCtx = blueCanvas.getContext('2d')!;
+
+    const blueGrad = bCtx.createLinearGradient(0, 0, 256, 256);
+    blueGrad.addColorStop(0, '#1d4ed8');
+    blueGrad.addColorStop(0.5, '#1e3a8a');
+    blueGrad.addColorStop(1, '#0f172a');
+    bCtx.fillStyle = blueGrad;
+    bCtx.fillRect(0, 0, 256, 256);
+
+    // Subtle athletic hexagon weave
+    bCtx.fillStyle = 'rgba(255,255,255,0.06)';
+    for (let y = 0; y < 256; y += 6) {
+      for (let x = 0; x < 256; x += 6) {
+        if ((x ^ y) % 12 === 0) bCtx.fillRect(x, y, 3, 3);
+      }
+    }
+    const blueFabricMap = new THREE.CanvasTexture(blueCanvas);
+    blueFabricMap.wrapS = THREE.RepeatWrapping;
+    blueFabricMap.wrapT = THREE.RepeatWrapping;
+    blueFabricMap.repeat.set(3, 3);
+
+    // 3. Chest Spider Emblem (Black spider logo with angled legs)
+    const chestCanvas = document.createElement('canvas');
+    chestCanvas.width = 512;
+    chestCanvas.height = 512;
+    const cCtx = chestCanvas.getContext('2d')!;
+    cCtx.clearRect(0, 0, 512, 512);
+
+    cCtx.fillStyle = '#0f172a';
+    cCtx.strokeStyle = '#020617';
+    cCtx.lineCap = 'round';
+    cCtx.lineJoin = 'round';
+
+    // Body
+    cCtx.beginPath();
+    cCtx.ellipse(256, 230, 16, 24, 0, 0, Math.PI * 2);
+    cCtx.fill();
+    cCtx.beginPath();
+    cCtx.ellipse(256, 280, 22, 38, 0, 0, Math.PI * 2);
+    cCtx.fill();
+
+    // 8 Angled legs
+    const legs = [
+      { x1: 250, y1: 220, x2: 170, y2: 150, x3: 130, y3: 100 },
+      { x1: 262, y1: 220, x2: 342, y2: 150, x3: 382, y3: 100 },
+      { x1: 248, y1: 235, x2: 150, y2: 200, x3: 110, y3: 180 },
+      { x1: 264, y1: 235, x2: 362, y2: 200, x3: 402, y3: 180 },
+      { x1: 248, y1: 255, x2: 160, y2: 300, x3: 130, y3: 380 },
+      { x1: 264, y1: 255, x2: 352, y2: 300, x3: 382, y3: 380 },
+      { x1: 250, y1: 275, x2: 190, y2: 360, x3: 170, y3: 440 },
+      { x1: 262, y1: 275, x2: 322, y2: 360, x3: 342, y3: 440 },
+    ];
+    legs.forEach((leg) => {
+      cCtx.beginPath();
+      cCtx.moveTo(leg.x1, leg.y1);
+      cCtx.lineTo(leg.x2, leg.y2);
+      cCtx.lineTo(leg.x3, leg.y3);
+      cCtx.lineWidth = 14;
+      cCtx.stroke();
+    });
+    const chestEmblemMap = new THREE.CanvasTexture(chestCanvas);
+
+    // 4. Back Spider Emblem (Bold scarlet red spider)
+    const backCanvas = document.createElement('canvas');
+    backCanvas.width = 512;
+    backCanvas.height = 512;
+    const bkCtx = backCanvas.getContext('2d')!;
+    bkCtx.clearRect(0, 0, 512, 512);
+
+    bkCtx.fillStyle = '#e11d48';
+    bkCtx.strokeStyle = '#be123c';
+    bkCtx.lineWidth = 16;
+    bkCtx.lineCap = 'round';
+    bkCtx.lineJoin = 'round';
+
+    bkCtx.beginPath();
+    bkCtx.ellipse(256, 260, 42, 60, 0, 0, Math.PI * 2);
+    bkCtx.fill();
+
+    const backLegs = [
+      { x1: 235, y1: 230, x2: 140, y2: 140, x3: 110, y3: 110 },
+      { x1: 277, y1: 230, x2: 372, y2: 140, x3: 402, y3: 110 },
+      { x1: 230, y1: 250, x2: 120, y2: 220, x3: 90, y3: 220 },
+      { x1: 282, y1: 250, x2: 392, y2: 220, x3: 422, y3: 220 },
+      { x1: 230, y1: 270, x2: 130, y2: 320, x3: 110, y3: 390 },
+      { x1: 282, y1: 270, x2: 382, y2: 320, x3: 402, y3: 390 },
+      { x1: 235, y1: 290, x2: 170, y2: 380, x3: 160, y3: 430 },
+      { x1: 277, y1: 290, x2: 342, y2: 380, x3: 352, y3: 430 },
+    ];
+    backLegs.forEach((leg) => {
+      bkCtx.beginPath();
+      bkCtx.moveTo(leg.x1, leg.y1);
+      bkCtx.lineTo(leg.x2, leg.y2);
+      bkCtx.lineTo(leg.x3, leg.y3);
+      bkCtx.stroke();
+    });
+    const backEmblemMap = new THREE.CanvasTexture(backCanvas);
+
+    return { redWebMap, blueFabricMap, chestEmblemMap, backEmblemMap };
+  }
+
+  /**
+   * Ultra-detailed, High-Definition Spider-Man Hero Model
+   */
   private createHeroCharacter(): THREE.Group {
     const root = new THREE.Group();
+    const textures = this.createSpiderManTextures();
 
     // High-tech materials
-    const suitMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b, // Dark obsidian carbon weave
-      roughness: 0.35,
-      metalness: 0.6,
+    const redWebMat = new THREE.MeshStandardMaterial({
+      map: textures.redWebMap,
+      roughness: 0.38,
+      metalness: 0.22,
     });
-    const suitAccentMat = new THREE.MeshStandardMaterial({
-      color: 0x0284c7, // Vibrant electric blue suit plates
-      roughness: 0.3,
-      metalness: 0.7,
+    const blueFabricMat = new THREE.MeshStandardMaterial({
+      map: textures.blueFabricMap,
+      roughness: 0.42,
+      metalness: 0.28,
     });
-    const visorMat = new THREE.MeshBasicMaterial({
-      color: 0x38bdf8, // Luminous cyan eye visor
+    const blackTrimMat = new THREE.MeshStandardMaterial({
+      color: 0x090d16,
+      roughness: 0.25,
+      metalness: 0.5,
+    });
+    const silverShooterMat = new THREE.MeshStandardMaterial({
+      color: 0xe2e8f0,
+      roughness: 0.18,
+      metalness: 0.88,
+    });
+    const lensGlassMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.12,
+      metalness: 0.35,
+    });
+    const nozzleGlowMat = new THREE.MeshBasicMaterial({
+      color: 0x38bdf8,
     });
 
-    // Torso
-    const torsoGeo = new THREE.BoxGeometry(0.7, 0.9, 0.45);
-    this.torsoMesh = new THREE.Mesh(torsoGeo, suitAccentMat);
-    this.torsoMesh.position.y = 1.1;
+    // -------------------------------------------------------------
+    // TORSO & UPPER BODY
+    // -------------------------------------------------------------
+    // Red webbed central chest block directly attached to character root
+    const chestGeo = new THREE.BoxGeometry(0.56, 0.9, 0.42);
+    this.torsoMesh = new THREE.Mesh(chestGeo, redWebMat);
+    this.torsoMesh.position.set(0, 0.42, 0);
     root.add(this.torsoMesh);
 
-    // Head
-    const headGeo = new THREE.SphereGeometry(0.24, 16, 16);
-    this.headMesh = new THREE.Mesh(headGeo, suitMat);
-    this.headMesh.position.set(0, 0.65, 0.05);
+    // Blue athletic side flank panels (left & right)
+    const sideGeo = new THREE.BoxGeometry(0.09, 0.84, 0.4);
+    const leftSide = new THREE.Mesh(sideGeo, blueFabricMat);
+    leftSide.position.set(-0.31, 0, 0);
+    this.torsoMesh.add(leftSide);
+
+    const rightSide = new THREE.Mesh(sideGeo, blueFabricMat);
+    rightSide.position.set(0.31, 0, 0);
+    this.torsoMesh.add(rightSide);
+
+    // Chest spider emblem decal
+    const emblemGeo = new THREE.PlaneGeometry(0.44, 0.44);
+    const chestEmblemMat = new THREE.MeshBasicMaterial({
+      map: textures.chestEmblemMap,
+      transparent: true,
+      depthWrite: false,
+    });
+    const chestEmblem = new THREE.Mesh(emblemGeo, chestEmblemMat);
+    chestEmblem.position.set(0, 0.08, 0.215);
+    this.torsoMesh.add(chestEmblem);
+
+    // Back spider emblem decal
+    const backEmblemMat = new THREE.MeshBasicMaterial({
+      map: textures.backEmblemMap,
+      transparent: true,
+      depthWrite: false,
+    });
+    const backEmblem = new THREE.Mesh(emblemGeo, backEmblemMat);
+    backEmblem.position.set(0, 0.08, -0.215);
+    backEmblem.rotation.y = Math.PI;
+    this.torsoMesh.add(backEmblem);
+
+    // Utility belt with silver web canisters
+    const beltGeo = new THREE.BoxGeometry(0.7, 0.1, 0.44);
+    const belt = new THREE.Mesh(beltGeo, redWebMat);
+    belt.position.y = -0.4;
+    this.torsoMesh.add(belt);
+
+    const cartGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.09, 8);
+    for (const cx of [-0.36, -0.32, 0.32, 0.36]) {
+      const cart = new THREE.Mesh(cartGeo, silverShooterMat);
+      cart.position.set(cx, -0.4, 0.08);
+      cart.rotation.z = Math.PI / 2;
+      this.torsoMesh.add(cart);
+    }
+
+    // -------------------------------------------------------------
+    // HEAD & SPIDER-MAN MASK
+    // -------------------------------------------------------------
+    this.headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.24, 24, 24), redWebMat);
+    this.headMesh.scale.set(1.0, 1.14, 1.06);
+    this.headMesh.position.set(0, 0.65, 0.04);
     this.torsoMesh.add(this.headMesh);
 
-    // Visor eyes
-    const visorGeo = new THREE.BoxGeometry(0.32, 0.09, 0.12);
-    this.visorMesh = new THREE.Mesh(visorGeo, visorMat);
-    this.visorMesh.position.set(0, 0.02, 0.2);
-    this.headMesh.add(this.visorMesh);
+    // Iconic Spider-Man Angled Eye Lenses
+    const eyeRimGeo = new THREE.BoxGeometry(0.14, 0.11, 0.04);
+    const eyeLensGeo = new THREE.PlaneGeometry(0.12, 0.09);
 
-    // Left Arm
+    // Left eye
+    const leftEyeGroup = new THREE.Group();
+    leftEyeGroup.position.set(-0.095, 0.035, 0.22);
+    leftEyeGroup.rotation.set(0, 0.22, -0.12);
+    const leftRim = new THREE.Mesh(eyeRimGeo, blackTrimMat);
+    const leftLens = new THREE.Mesh(eyeLensGeo, lensGlassMat);
+    leftLens.position.z = 0.022;
+    leftEyeGroup.add(leftRim, leftLens);
+    this.headMesh.add(leftEyeGroup);
+
+    // Right eye
+    const rightEyeGroup = new THREE.Group();
+    rightEyeGroup.position.set(0.095, 0.035, 0.22);
+    rightEyeGroup.rotation.set(0, -0.22, 0.12);
+    const rightRim = new THREE.Mesh(eyeRimGeo, blackTrimMat);
+    const rightLens = new THREE.Mesh(eyeLensGeo, lensGlassMat);
+    rightLens.position.z = 0.022;
+    rightEyeGroup.add(rightRim, rightLens);
+    this.headMesh.add(rightEyeGroup);
+
+    this.visorMesh = rightLens; // keep reference for consistency
+
+    // -------------------------------------------------------------
+    // ARMS & METALLIC WRIST WEB-SHOOTERS
+    // -------------------------------------------------------------
+    const shoulderGeo = new THREE.SphereGeometry(0.13, 16, 16);
+    const upperArmGeo = new THREE.CylinderGeometry(0.09, 0.08, 0.38, 12);
+    const gauntletGeo = new THREE.CylinderGeometry(0.095, 0.082, 0.36, 12);
+    const bracerGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.12, 12);
+    const nozzleGeo = new THREE.CylinderGeometry(0.025, 0.025, 0.05, 8);
+    const handGeo = new THREE.BoxGeometry(0.1, 0.16, 0.08);
+
+    // Left Arm Group
     this.leftArmGroup = new THREE.Group();
     this.leftArmGroup.position.set(-0.48, 0.35, 0);
-    const armGeo = new THREE.BoxGeometry(0.18, 0.75, 0.18);
-    const leftArmMesh = new THREE.Mesh(armGeo, suitMat);
-    leftArmMesh.position.y = -0.35;
-    this.leftArmGroup.add(leftArmMesh);
+
+    const leftShoulder = new THREE.Mesh(shoulderGeo, redWebMat);
+    const leftUpperArm = new THREE.Mesh(upperArmGeo, blueFabricMat);
+    leftUpperArm.position.y = -0.2;
+    const leftGauntlet = new THREE.Mesh(gauntletGeo, redWebMat);
+    leftGauntlet.position.y = -0.5;
+    const leftBracer = new THREE.Mesh(bracerGeo, silverShooterMat);
+    leftBracer.position.y = -0.65;
+    const leftNozzle = new THREE.Mesh(nozzleGeo, nozzleGlowMat);
+    leftNozzle.position.set(0, -0.66, 0.06);
+    leftNozzle.rotation.x = Math.PI / 2;
+    const leftHand = new THREE.Mesh(handGeo, redWebMat);
+    leftHand.position.y = -0.76;
+
+    this.leftArmGroup.add(leftShoulder, leftUpperArm, leftGauntlet, leftBracer, leftNozzle, leftHand);
     this.torsoMesh.add(this.leftArmGroup);
 
-    // Right Arm (Shooter arm)
+    // Right Arm Group (Web-Slinger Arm)
     this.rightArmGroup = new THREE.Group();
     this.rightArmGroup.position.set(0.48, 0.35, 0);
-    const rightArmMesh = new THREE.Mesh(armGeo, suitMat);
-    rightArmMesh.position.y = -0.35;
-    this.rightArmGroup.add(rightArmMesh);
+
+    const rightShoulder = new THREE.Mesh(shoulderGeo, redWebMat);
+    const rightUpperArm = new THREE.Mesh(upperArmGeo, blueFabricMat);
+    rightUpperArm.position.y = -0.2;
+    const rightGauntlet = new THREE.Mesh(gauntletGeo, redWebMat);
+    rightGauntlet.position.y = -0.5;
+    const rightBracer = new THREE.Mesh(bracerGeo, silverShooterMat);
+    rightBracer.position.y = -0.65;
+    const rightNozzle = new THREE.Mesh(nozzleGeo, nozzleGlowMat);
+    rightNozzle.position.set(0, -0.66, 0.06);
+    rightNozzle.rotation.x = Math.PI / 2;
+    const rightHand = new THREE.Mesh(handGeo, redWebMat);
+    rightHand.position.y = -0.76;
+
+    this.rightArmGroup.add(rightShoulder, rightUpperArm, rightGauntlet, rightBracer, rightNozzle, rightHand);
     this.torsoMesh.add(this.rightArmGroup);
+
+    // -------------------------------------------------------------
+    // LEGS & ARTICULATED BOOTS (Feet calibrated to exactly ground level y=0.00)
+    // -------------------------------------------------------------
+    const thighGeo = new THREE.CylinderGeometry(0.125, 0.105, 0.42, 12);
+    const kneeGeo = new THREE.BoxGeometry(0.17, 0.14, 0.15);
+    const calfGeo = new THREE.CylinderGeometry(0.105, 0.095, 0.38, 12);
+    const footGeo = new THREE.BoxGeometry(0.15, 0.1, 0.28);
 
     // Left Leg
     this.leftLegGroup = new THREE.Group();
-    this.leftLegGroup.position.set(-0.24, -0.45, 0);
-    const legGeo = new THREE.BoxGeometry(0.22, 0.85, 0.22);
-    const leftLegMesh = new THREE.Mesh(legGeo, suitAccentMat);
-    leftLegMesh.position.y = -0.42;
-    this.leftLegGroup.add(leftLegMesh);
+    this.leftLegGroup.position.set(-0.24, -0.42, 0);
+
+    const leftThigh = new THREE.Mesh(thighGeo, blueFabricMat);
+    leftThigh.position.y = -0.21;
+    const leftKnee = new THREE.Mesh(kneeGeo, redWebMat);
+    leftKnee.position.set(0, -0.42, 0.04);
+    const leftCalf = new THREE.Mesh(calfGeo, redWebMat);
+    leftCalf.position.y = -0.63;
+    const leftFoot = new THREE.Mesh(footGeo, blackTrimMat);
+    leftFoot.position.set(0, -0.85, 0.06);
+
+    this.leftLegGroup.add(leftThigh, leftKnee, leftCalf, leftFoot);
     this.torsoMesh.add(this.leftLegGroup);
 
     // Right Leg
     this.rightLegGroup = new THREE.Group();
-    this.rightLegGroup.position.set(0.24, -0.45, 0);
-    const rightLegMesh = new THREE.Mesh(legGeo, suitAccentMat);
-    rightLegMesh.position.y = -0.42;
-    this.rightLegGroup.add(rightLegMesh);
+    this.rightLegGroup.position.set(0.24, -0.42, 0);
+
+    const rightThigh = new THREE.Mesh(thighGeo, blueFabricMat);
+    rightThigh.position.y = -0.21;
+    const rightKnee = new THREE.Mesh(kneeGeo, redWebMat);
+    rightKnee.position.set(0, -0.42, 0.04);
+    const rightCalf = new THREE.Mesh(calfGeo, redWebMat);
+    rightCalf.position.y = -0.63;
+    const rightFoot = new THREE.Mesh(footGeo, blackTrimMat);
+    rightFoot.position.set(0, -0.85, 0.06);
+
+    this.rightLegGroup.add(rightThigh, rightKnee, rightCalf, rightFoot);
     this.torsoMesh.add(this.rightLegGroup);
 
     return root;
@@ -353,12 +675,13 @@ export class WebSwingScene {
    * Handle mouse / touch drag for camera rotation
    */
   public rotateCamera(deltaX: number, deltaY: number) {
+    const yFactor = this.invertY ? -1 : 1;
     this.cameraYaw -= deltaX * this.lookSensitivity;
-    this.cameraPitch -= deltaY * this.lookSensitivity;
+    this.cameraPitch -= deltaY * this.lookSensitivity * yFactor;
 
-    // Pitch constraints
-    const maxPitch = Math.PI / 2 - 0.08;
-    const minPitch = -Math.PI / 3;
+    // Pitch constraints: ~65 deg up, ~60 deg down
+    const maxPitch = Math.PI / 2.8;
+    const minPitch = -Math.PI / 2.8;
     this.cameraPitch = Math.max(minPitch, Math.min(maxPitch, this.cameraPitch));
   }
 
@@ -366,11 +689,12 @@ export class WebSwingScene {
    * Keyboard camera rotation (useful for touchpad / keyboard-only users)
    */
   public rotateCameraByKeyboard(deltaYaw: number, deltaPitch: number) {
+    const yFactor = this.invertY ? -1 : 1;
     this.cameraYaw += deltaYaw;
-    this.cameraPitch += deltaPitch;
+    this.cameraPitch += deltaPitch * yFactor;
 
-    const maxPitch = Math.PI / 2 - 0.08;
-    const minPitch = -Math.PI / 3;
+    const maxPitch = Math.PI / 2.8;
+    const minPitch = -Math.PI / 2.8;
     this.cameraPitch = Math.max(minPitch, Math.min(maxPitch, this.cameraPitch));
   }
 
@@ -388,6 +712,8 @@ export class WebSwingScene {
 
   public resetPosition(spawnPos?: THREE.Vector3) {
     this.physics.reset(spawnPos || new THREE.Vector3(0, 75, 40));
+    this.smoothedHeroPos.copy(this.physics.position);
+    this.currentCamDistance = this.cameraDistance;
     this.city.resetRings();
     this.ringsCollectedCount = 0;
   }
@@ -496,8 +822,8 @@ export class WebSwingScene {
     // Character position sync
     this.characterGroup.position.copy(this.physics.position);
 
-    // Procedural Character animation & Posing
-    this.animateHeroPosing(deltaTime);
+    // Procedural Character animation & Posing (locomotion, facing, banking, swinging)
+    this.animateHeroPosing(deltaTime, input, forward, right);
 
     // Camera follow & collision damping
     this.updateCamera(currentSpeed, deltaTime);
@@ -529,73 +855,194 @@ export class WebSwingScene {
     return this.physics.getTelemetry(this.fps, this.targetedAnchor !== null, currentAnchorDist);
   }
 
-  private animateHeroPosing(dt: number) {
+  /**
+   * Smoothly rotates character model towards target yaw angle using the shortest angular path.
+   * Returns the signed angular difference (useful for turn banking/leaning).
+   */
+  private rotateCharacterFacing(targetYaw: number, stepFraction: number): number {
+    let diff = targetYaw - this.characterGroup.rotation.y;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+
+    const applied = diff * THREE.MathUtils.clamp(stepFraction, 0, 1);
+    this.characterGroup.rotation.y += applied;
+    return diff;
+  }
+
+  private animateHeroPosing(
+    dt: number,
+    input: PlayerInput,
+    forward: THREE.Vector3,
+    right: THREE.Vector3
+  ) {
     const vel = this.physics.velocity;
-    const speed = vel.length();
+    const horizSpeed = Math.hypot(vel.x, vel.z);
+
+    // Compute intended movement direction vector from keyboard/touchpad input in camera space
+    const moveInput = new THREE.Vector3();
+    if (input.forward) moveInput.add(forward);
+    if (input.backward) moveInput.sub(forward);
+    if (input.right) moveInput.add(right);
+    if (input.left) moveInput.sub(right);
+
+    const hasInput = moveInput.lengthSq() > 0.001;
+    if (hasInput) {
+      moveInput.normalize();
+    }
 
     if (this.physics.isAttached && this.physics.anchorPoint) {
-      // Web swinging pose: Face velocity direction, one arm raised toward anchor
-      const moveDir = vel.clone().normalize();
-      if (speed > 1.5) {
-        const targetRot = Math.atan2(moveDir.x, moveDir.z);
-        this.characterGroup.rotation.y = THREE.MathUtils.lerp(this.characterGroup.rotation.y, targetRot, 0.2);
-        // Bank into turns
-        const bankAngle = -this.physics.velocity.dot(new THREE.Vector3(1, 0, 0)) * 0.015;
-        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, bankAngle, 0.15);
+      // -------------------------------------------------------------
+      // STATE 1: WEB SWINGING
+      // -------------------------------------------------------------
+      // Align character facing smoothly with horizontal velocity
+      if (horizSpeed > 1.2) {
+        const targetYaw = Math.atan2(vel.x, vel.z);
+        this.rotateCharacterFacing(targetYaw, 14.0 * dt);
       }
 
-      // Torso tilt forward
-      this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.3, 0.2);
+      // Bank smoothly into lateral turns based on angular turning velocity
+      const heading = new THREE.Vector3(
+        Math.sin(this.characterGroup.rotation.y),
+        0,
+        Math.cos(this.characterGroup.rotation.y)
+      );
+      const crossY = vel.x * heading.z - vel.z * heading.x;
+      const bankAngle = THREE.MathUtils.clamp(crossY * 0.035, -0.6, 0.6);
+      this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, bankAngle, 0.18);
 
-      // Right arm raised toward anchor
-      const toAnchor = new THREE.Vector3().subVectors(this.physics.anchorPoint, this.physics.position).normalize();
-      this.rightArmGroup.rotation.x = -Math.PI * 0.75;
-      this.rightArmGroup.rotation.z = 0.2;
+      // Pitch angle along vertical swing velocity (smooth and stabilized)
+      const swingPitch = THREE.MathUtils.clamp(-vel.y * 0.018, -0.45, 0.45);
+      this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.2 + swingPitch, 0.15);
+      this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
 
-      // Left arm trailing back for balance
-      this.leftArmGroup.rotation.x = 0.6;
-      this.leftArmGroup.rotation.z = -0.5;
+      // Right arm raised toward anchor point in local space
+      const toAnchorWorld = new THREE.Vector3()
+        .subVectors(this.physics.anchorPoint, this.physics.position)
+        .normalize();
+      const toAnchorLocal = toAnchorWorld
+        .clone()
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.characterGroup.rotation.y);
 
-      // Legs swept back
-      this.leftLegGroup.rotation.x = 0.5;
-      this.rightLegGroup.rotation.x = 0.7;
+      const armElev = Math.atan2(-toAnchorLocal.y, Math.hypot(toAnchorLocal.x, toAnchorLocal.z));
+      const armYaw = Math.atan2(toAnchorLocal.x, toAnchorLocal.z);
+
+      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(
+        this.rightArmGroup.rotation.x,
+        armElev - Math.PI * 0.5,
+        0.25
+      );
+      this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, armYaw * 0.5, 0.25);
+
+      // Left arm trailing back for dynamic acrobat balance
+      this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.7, 0.2);
+      this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.5, 0.2);
+
+      // Legs swept back dynamically with wind
+      this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.55, 0.2);
+      this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, 0.75, 0.2);
+      this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.1, 0.2);
+      this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.1, 0.2);
     } else if (!this.physics.isOnGround && !this.physics.isOnRoof) {
-      // Free falling / aerial dive pose
-      if (speed > 4) {
-        const targetRot = Math.atan2(vel.x, vel.z);
-        this.characterGroup.rotation.y = THREE.MathUtils.lerp(this.characterGroup.rotation.y, targetRot, 0.25);
+      // -------------------------------------------------------------
+      // STATE 2: AIRBORNE / FREE FALL / JUMP DIVE
+      // -------------------------------------------------------------
+      // Align facing with movement direction or velocity
+      if (hasInput) {
+        const targetYaw = Math.atan2(moveInput.x, moveInput.z);
+        this.rotateCharacterFacing(targetYaw, 12.0 * dt);
+      } else if (horizSpeed > 1.5) {
+        const targetYaw = Math.atan2(vel.x, vel.z);
+        this.rotateCharacterFacing(targetYaw, 10.0 * dt);
       }
 
-      // Fast dive: aerodynamic sweep
-      const divePitch = Math.min(Math.PI * 0.45, Math.max(-0.2, -vel.y * 0.04));
-      this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, divePitch, 0.2);
-      this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.1);
+      // Aerodynamic body pitch based on vertical velocity (gentle and smooth)
+      const divePitch = Math.min(Math.PI * 0.35, Math.max(-0.2, -vel.y * 0.025));
+      this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, divePitch, 0.15);
+      this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.15);
+      this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
 
-      this.rightArmGroup.rotation.x = 0.8;
-      this.rightArmGroup.rotation.z = 0.4;
-      this.leftArmGroup.rotation.x = 0.8;
-      this.leftArmGroup.rotation.z = -0.4;
-
-      this.leftLegGroup.rotation.x = 0.2;
-      this.rightLegGroup.rotation.x = 0.3;
-    } else {
-      // On ground or roof: standing / running
-      this.torsoMesh.rotation.x = 0;
-      this.torsoMesh.rotation.z = 0;
-
-      if (speed > 1.0) {
-        // Run cycle
-        const runCycle = Math.sin(performance.now() * 0.015);
-        this.leftLegGroup.rotation.x = runCycle * 0.6;
-        this.rightLegGroup.rotation.x = -runCycle * 0.6;
-        this.leftArmGroup.rotation.x = -runCycle * 0.6;
-        this.rightArmGroup.rotation.x = runCycle * 0.6;
+      if (vel.y > 2.0) {
+        // Jumping up: agile Spider-Man leap pose
+        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.35, 0.2);
+        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.2, 0.2);
+        this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, -0.8, 0.2);
+        this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, -0.8, 0.2);
+        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.4, 0.2);
+        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.4, 0.2);
       } else {
-        // Idle
-        this.leftLegGroup.rotation.x = 0;
-        this.rightLegGroup.rotation.x = 0;
-        this.leftArmGroup.rotation.x = 0;
-        this.rightArmGroup.rotation.x = 0;
+        // Free fall / diving pose
+        this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, 0.8, 0.2);
+        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.45, 0.2);
+        this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.8, 0.2);
+        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.45, 0.2);
+
+        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.25, 0.2);
+        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, 0.35, 0.2);
+      }
+    } else {
+      // -------------------------------------------------------------
+      // STATE 3: GROUND & ROOFTOP LOCOMOTION (WALKING / RUNNING / TURNING)
+      // -------------------------------------------------------------
+      // If player provides movement input, immediately and smoothly face that direction!
+      // This eliminates the crab-walking and moonwalking completely.
+      let turnDiff = 0;
+      if (hasInput) {
+        const targetYaw = Math.atan2(moveInput.x, moveInput.z);
+        // Snappy, realistic turning rate
+        turnDiff = this.rotateCharacterFacing(targetYaw, 18.0 * dt);
+
+        // Dynamic banking / leaning into sharp turns while running
+        const bankLean = THREE.MathUtils.clamp(-turnDiff * 0.45, -0.32, 0.32);
+        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, bankLean, 0.25);
+      } else if (horizSpeed > 0.6) {
+        // Coasting / sliding on ground: face velocity direction
+        const targetYaw = Math.atan2(vel.x, vel.z);
+        turnDiff = this.rotateCharacterFacing(targetYaw, 12.0 * dt);
+        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
+      } else {
+        // Standing still: straighten torso
+        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
+      }
+
+      const isMoving = hasInput || horizSpeed > 0.8;
+
+      if (isMoving) {
+        // Running cycle frequency scaled to actual movement speed
+        const cadence = Math.min(22, Math.max(9, horizSpeed * 1.35));
+        this.runCycleTime += dt * cadence;
+
+        const legSwing = Math.sin(this.runCycleTime) * 0.75;
+        const armSwing = Math.sin(this.runCycleTime) * 0.65;
+
+        // Legs alternate forward & backward along Spider-Man's actual facing direction
+        this.leftLegGroup.rotation.x = legSwing;
+        this.rightLegGroup.rotation.x = -legSwing;
+        this.leftLegGroup.rotation.z = 0.05;
+        this.rightLegGroup.rotation.z = -0.05;
+
+        // Arms alternate opposite to legs with natural athletic bend
+        this.leftArmGroup.rotation.x = -armSwing;
+        this.rightArmGroup.rotation.x = armSwing;
+        this.leftArmGroup.rotation.z = -0.22;
+        this.rightArmGroup.rotation.z = 0.22;
+
+        // Athletic sprint forward lean & vertical step bounce
+        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.22, 0.25);
+        this.torsoMesh.position.y = 0.42 + Math.abs(Math.sin(this.runCycleTime * 2)) * 0.04;
+      } else {
+        // Idle Spider-Man athletic ready crouch
+        this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
+        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.12, 0.2);
+
+        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.15, 0.2);
+        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.1, 0.2);
+        this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.12, 0.2);
+        this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.12, 0.2);
+
+        this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.15, 0.2);
+        this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, 0.15, 0.2);
+        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.25, 0.2);
+        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.25, 0.2);
       }
     }
   }
@@ -603,19 +1050,23 @@ export class WebSwingScene {
   private updateCamera(speed: number, dt: number) {
     const heroPos = this.physics.position;
 
-    // Speed-based dynamic FOV widening
-    const speedRatio = Math.min(1.0, speed / 55);
-    const targetFOV = this.baseFOV + speedRatio * 20; // 68 up to 88 degrees
-    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFOV, 0.08);
+    // Smoothly track hero position to eliminate high-frequency physics micro-steps
+    const lerpSpeed = Math.min(1.0, 16.0 * dt);
+    this.smoothedHeroPos.lerp(heroPos, lerpSpeed);
+
+    // Gentle, non-dizzying dynamic FOV widening (68 up to 76 deg max)
+    const speedRatio = Math.min(1.0, speed / 60);
+    const targetFOV = this.baseFOV + speedRatio * 8;
+    this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFOV, Math.min(1.0, 4.0 * dt));
     this.camera.updateProjectionMatrix();
 
     if (this.cameraMode === 'first_person') {
       // First person view: camera placed right at head/visor
-      this.camera.position.set(heroPos.x, heroPos.y + 1.6, heroPos.z);
+      this.camera.position.set(this.smoothedHeroPos.x, this.smoothedHeroPos.y + 1.1, this.smoothedHeroPos.z);
       const lookDist = 10;
-      const targetX = heroPos.x + Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
-      const targetY = heroPos.y + 1.6 + Math.sin(this.cameraPitch) * lookDist;
-      const targetZ = heroPos.z + Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
+      const targetX = this.smoothedHeroPos.x + Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
+      const targetY = this.smoothedHeroPos.y + 1.1 + Math.sin(this.cameraPitch) * lookDist;
+      const targetZ = this.smoothedHeroPos.z + Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
       this.camera.lookAt(targetX, targetY, targetZ);
       this.characterGroup.visible = false;
       return;
@@ -624,37 +1075,53 @@ export class WebSwingScene {
     this.characterGroup.visible = true;
 
     // Third person chase cam:
-    // Calculate ideal camera position based on yaw and pitch
-    const horizontalDist = this.cameraDistance * Math.cos(this.cameraPitch);
-    const verticalDist = this.cameraDistance * Math.sin(this.cameraPitch) + 1.8;
-
-    const idealCamPos = new THREE.Vector3(
-      heroPos.x - Math.sin(this.cameraYaw) * horizontalDist,
-      heroPos.y + verticalDist,
-      heroPos.z - Math.cos(this.cameraYaw) * horizontalDist
+    // Look comfortably above Peter's head towards the city
+    const heroHead = new THREE.Vector3(
+      this.smoothedHeroPos.x,
+      this.smoothedHeroPos.y + 1.1,
+      this.smoothedHeroPos.z
     );
 
-    // Camera wall collision test: Raycast from hero to idealCamPos to prevent wall clipping!
-    const heroHead = new THREE.Vector3(heroPos.x, heroPos.y + 1.8, heroPos.z);
-    const camRayDir = new THREE.Vector3().subVectors(idealCamPos, heroHead);
-    const camDist = camRayDir.length();
-    camRayDir.normalize();
+    // Raycast backwards from hero head to detect building walls smoothly
+    const rayDir = new THREE.Vector3(
+      -Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch),
+      -Math.sin(this.cameraPitch) + 0.1,
+      -Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch)
+    ).normalize();
 
-    const camRaycaster = new THREE.Raycaster(heroHead, camRayDir, 0.2, camDist);
+    let targetDist = this.cameraDistance;
+    const camRaycaster = new THREE.Raycaster(heroHead, rayDir, 0.4, this.cameraDistance);
     const hits = camRaycaster.intersectObjects(this.city.buildingMeshes, false);
-
-    let finalCamPos = idealCamPos;
     if (hits.length > 0) {
-      // Pull camera in front of wall with safety margin
-      finalCamPos = hits[0].point.clone().sub(camRayDir.clone().multiplyScalar(0.4));
+      targetDist = Math.max(2.2, hits[0].distance - 0.5);
     }
 
-    // Smooth lerp camera position
-    this.camera.position.lerp(finalCamPos, Math.min(1.0, 18 * dt));
+    // Smooth camera distance interpolation (prevents violent popping/shaking near walls!)
+    this.currentCamDistance = THREE.MathUtils.lerp(
+      this.currentCamDistance,
+      targetDist,
+      Math.min(1.0, 8.0 * dt)
+    );
 
-    // Look slightly ahead of character along trajectory
-    const lookTarget = heroPos.clone().add(new THREE.Vector3(0, 1.4, 0));
-    this.cameraTarget.lerp(lookTarget, 0.25);
+    const horizontalDist = this.currentCamDistance * Math.cos(this.cameraPitch);
+    const verticalDist = 1.6 - this.currentCamDistance * Math.sin(this.cameraPitch);
+
+    const targetCamPos = new THREE.Vector3(
+      this.smoothedHeroPos.x - Math.sin(this.cameraYaw) * horizontalDist,
+      Math.max(1.0, this.smoothedHeroPos.y + verticalDist),
+      this.smoothedHeroPos.z - Math.cos(this.cameraYaw) * horizontalDist
+    );
+
+    // Smoothly position camera
+    this.camera.position.lerp(targetCamPos, lerpSpeed);
+
+    // Look comfortably ahead and slightly over Peter's head towards city skyline
+    const lookTarget = new THREE.Vector3(
+      this.smoothedHeroPos.x,
+      this.smoothedHeroPos.y + 1.2 + Math.sin(this.cameraPitch) * (this.currentCamDistance * 0.4),
+      this.smoothedHeroPos.z
+    );
+    this.cameraTarget.lerp(lookTarget, lerpSpeed);
     this.camera.lookAt(this.cameraTarget);
   }
 
@@ -664,8 +1131,10 @@ export class WebSwingScene {
       this.webAnchorImpactMesh.visible = true;
       this.webAnchorImpactMesh.position.copy(this.physics.anchorPoint);
 
-      // Hero shooter hand position
-      const handPos = this.physics.position.clone().add(new THREE.Vector3(0.4, 1.4, 0));
+      // Hero shooter hand position from actual right wrist web-shooter in 3D world space
+      const handPos = new THREE.Vector3();
+      this.rightArmGroup.getWorldPosition(handPos);
+      handPos.y -= 0.66;
       const anchorPos = this.physics.anchorPoint;
 
       // Draw 30-segment line with slight catenary sag when moving

@@ -283,6 +283,38 @@ class SoundEngine {
     osc.start(now);
     osc.stop(now + 0.25);
   }
+
+  /**
+   * Superhero athletic jump launch whoosh
+   */
+  public playJump() {
+    this.initContext();
+    if (!this.ctx || !this.masterGain || this.isMuted) return;
+
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const filter = this.ctx.createBiquadFilter();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.exponentialRampToValueAtTime(360, now + 0.1);
+    osc.frequency.exponentialRampToValueAtTime(180, now + 0.22);
+
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.frequency.exponentialRampToValueAtTime(450, now + 0.22);
+
+    gain.gain.setValueAtTime(0.28, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.masterGain);
+
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
 }
 
 export const soundEngine = new SoundEngine();
