@@ -7,6 +7,7 @@ import { MobileControls } from './components/MobileControls';
 import { PHYSICS_PRESETS, PhysicsConfig, TelemetryData, TimeOfDay, GameMode } from './types/physics';
 import { PlayerInput } from './physics/swingPhysics';
 import { soundEngine } from './audio/soundEngine';
+import { modelManager } from './renderer/modelManager';
 import confetti from 'canvas-confetti';
 import { Play, Sparkles } from 'lucide-react';
 
@@ -104,6 +105,7 @@ export default function App() {
 
   useEffect(() => {
     setIsMobile('ontouchstart' in window || navigator.maxTouchPoints > 0);
+    modelManager.preloadAll();
   }, []);
 
   // Listen to Pointer Lock changes

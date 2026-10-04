@@ -15,6 +15,21 @@ export interface PlayerInput {
   sprint?: boolean;
 }
 
+export interface CityObstacles {
+  staticColliders?: {
+    type: 'cylinder' | 'box';
+    center: THREE.Vector3;
+    radius?: number;
+    height?: number;
+    size?: THREE.Vector3;
+    box?: THREE.Box3;
+  }[];
+  getVehicleColliders?: () => { box: THREE.Box3; isMoving: boolean }[];
+  getPedestrianColliders?: () => { position: THREE.Vector3; radius: number; height: number }[];
+  isWaterAt?: (x: number, z: number) => boolean;
+  getWaterLevel?: (x: number, z: number) => number;
+}
+
 export class SwingPhysics {
   // State
   public position: THREE.Vector3 = new THREE.Vector3(0, 45, 0);
@@ -130,7 +145,8 @@ export class SwingPhysics {
     input: PlayerInput,
     cameraForward: THREE.Vector3,
     cameraRight: THREE.Vector3,
-    buildings: BuildingData[]
+    buildings: BuildingData[],
+    obstacles?: CityObstacles
   ) {
     // Decoupled sub-stepping: divide frame into steps of max 0.008s (120 Hz)
     const effectiveDelta = Math.min(deltaTime * this.config.timeScale, 0.08);
@@ -140,7 +156,7 @@ export class SwingPhysics {
     const jumpTriggered = Boolean(input.jump && !this.prevJumpInput);
 
     for (let step = 0; step < subSteps; step++) {
-      this.subStep(dt, input, cameraForward, cameraRight, buildings, step === 0 && jumpTriggered);
+      this.subStep(dt, input, cameraForward, cameraRight, buildings, step === 0 && jumpTriggered, obstacles);
     }
 
     // Save jump input state for edge-triggered leap detection
@@ -173,7 +189,8 @@ export class SwingPhysics {
     cameraForward: THREE.Vector3,
     cameraRight: THREE.Vector3,
     buildings: BuildingData[],
-    jumpTriggered: boolean
+    jumpTriggered: boolean,
+    obstacles?: CityObstacles
   ) {
     // 1. Gravity Force Vector
     this.gravityVector.set(0, -this.config.gravity * this.config.playerMass, 0);
@@ -324,12 +341,12 @@ export class SwingPhysics {
     // 5. Integrate Position
     this.position.addScaledVector(this.velocity, dt);
 
-    // 6. Collision Resolution with Buildings and Ground
-    this.handleCollisions(buildings);
+    // 6. Collision Resolution with Buildings, Vehicles, NPCs, Props, and Ground/Water
+    this.handleCollisions(buildings, obstacles);
   }
 
-  private handleCollisions(buildings: BuildingData[]) {
-    const playerRadius = 0.8;
+  private handleCollisions(buildings: BuildingData[], obstacles?: CityObstacles) {
+    const playerRadius = 0.55;
     const playerHeight = 1.8;
     const playerFeetY = this.position.y - playerHeight / 2;
 
@@ -337,26 +354,50 @@ export class SwingPhysics {
     this.isOnRoof = false;
     this.isWallSliding = false;
 
-    // Ground floor collision (Street level y = 0)
-    if (playerFeetY <= 0) {
-      if (this.velocity.y < -4) {
-        soundEngine.playLanding();
+    // 1. Water or Ground floor collision
+    const isWater = obstacles?.isWaterAt && obstacles.isWaterAt(this.position.x, this.position.z);
+    if (isWater) {
+      const waterY = obstacles.getWaterLevel ? obstacles.getWaterLevel(this.position.x, this.position.z) : -0.45;
+      if (playerFeetY <= waterY + 0.1) {
+        if (this.velocity.y < -3.5) {
+          soundEngine.playLanding();
+        }
+        // Floating surface
+        this.position.y = waterY + playerHeight / 2 + 0.05;
+        this.velocity.y = Math.max(0, this.velocity.y * 0.4);
+        this.isOnGround = true;
+        this.hasAirZipped = false;
+
+        // Water drag resistance
+        this.velocity.x *= 0.88;
+        this.velocity.z *= 0.88;
+
+        if (this.isAttached) {
+          this.releaseWeb();
+        }
       }
-      this.position.y = playerHeight / 2;
-      this.velocity.y = 0;
-      this.isOnGround = true;
-      this.hasAirZipped = false;
+    } else {
+      // Normal Ground floor collision (Street level y = 0)
+      if (playerFeetY <= 0) {
+        if (this.velocity.y < -4) {
+          soundEngine.playLanding();
+        }
+        this.position.y = playerHeight / 2;
+        this.velocity.y = 0;
+        this.isOnGround = true;
+        this.hasAirZipped = false;
 
-      // Ground friction
-      this.velocity.x *= 0.92;
-      this.velocity.z *= 0.92;
+        // Ground friction
+        this.velocity.x *= 0.92;
+        this.velocity.z *= 0.92;
 
-      if (this.isAttached) {
-        this.releaseWeb();
+        if (this.isAttached) {
+          this.releaseWeb();
+        }
       }
     }
 
-    // Building collisions
+    // 2. Building collisions
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
       const box = b.box;
@@ -417,6 +458,175 @@ export class SwingPhysics {
       this.isWallSliding = true;
       // Slight wall friction
       this.velocity.y *= 0.98;
+    }
+
+    // 3. Vehicle collisions (Moving traffic and parked cars)
+    if (obstacles?.getVehicleColliders) {
+      const vehicles = obstacles.getVehicleColliders();
+      for (let i = 0; i < vehicles.length; i++) {
+        const v = vehicles[i];
+        const box = v.box;
+
+        if (
+          this.position.x < box.min.x - playerRadius ||
+          this.position.x > box.max.x + playerRadius ||
+          this.position.z < box.min.z - playerRadius ||
+          this.position.z > box.max.z + playerRadius ||
+          this.position.y < box.min.y ||
+          this.position.y > box.max.y + playerHeight
+        ) {
+          continue;
+        }
+
+        // Check if standing/landing on car roof
+        const isAboveCar = this.position.y >= box.max.y;
+        if (isAboveCar && playerFeetY <= box.max.y + 0.25) {
+          if (this.velocity.y < -4) soundEngine.playLanding();
+          this.position.y = box.max.y + playerHeight / 2;
+          this.velocity.y = 0;
+          this.isOnRoof = true;
+          this.isOnGround = true;
+          this.hasAirZipped = false;
+          this.velocity.x *= 0.94;
+          this.velocity.z *= 0.94;
+          continue;
+        }
+
+        // Side push-out (cannot pass through cars)
+        const dxMin = Math.abs(this.position.x - box.min.x);
+        const dxMax = Math.abs(this.position.x - box.max.x);
+        const dzMin = Math.abs(this.position.z - box.min.z);
+        const dzMax = Math.abs(this.position.z - box.max.z);
+        const minPen = Math.min(dxMin, dxMax, dzMin, dzMax);
+
+        if (minPen === dxMin) {
+          this.position.x = box.min.x - playerRadius;
+          if (this.velocity.x > 0) this.velocity.x = 0;
+        } else if (minPen === dxMax) {
+          this.position.x = box.max.x + playerRadius;
+          if (this.velocity.x < 0) this.velocity.x = 0;
+        } else if (minPen === dzMin) {
+          this.position.z = box.min.z - playerRadius;
+          if (this.velocity.z > 0) this.velocity.z = 0;
+        } else {
+          this.position.z = box.max.z + playerRadius;
+          if (this.velocity.z < 0) this.velocity.z = 0;
+        }
+      }
+    }
+
+    // 4. Pedestrian NPC collisions
+    if (obstacles?.getPedestrianColliders) {
+      const pedestrians = obstacles.getPedestrianColliders();
+      for (let i = 0; i < pedestrians.length; i++) {
+        const ped = pedestrians[i];
+        const dx = this.position.x - ped.position.x;
+        const dz = this.position.z - ped.position.z;
+
+        if (Math.abs(dx) > 1.8 || Math.abs(dz) > 1.8) continue;
+
+        const pedFeetY = ped.position.y;
+        const pedHeadY = ped.position.y + ped.height;
+        if (playerFeetY > pedHeadY || this.position.y + playerHeight / 2 < pedFeetY) continue;
+
+        const distSq = dx * dx + dz * dz;
+        const minDist = playerRadius + ped.radius;
+        if (distSq < minDist * minDist && distSq > 0.0001) {
+          const dist = Math.sqrt(distSq);
+          const push = minDist - dist;
+          const nx = dx / dist;
+          const nz = dz / dist;
+
+          this.position.x += nx * push;
+          this.position.z += nz * push;
+
+          const vDotN = this.velocity.x * nx + this.velocity.z * nz;
+          if (vDotN < 0) {
+            this.velocity.x -= vDotN * nx * 0.9;
+            this.velocity.z -= vDotN * nz * 0.9;
+          }
+        }
+      }
+    }
+
+    // 5. Static Props (Trees, Streetlamps, Bus Shelters, Benches, Hydrants, Mailboxes)
+    if (obstacles?.staticColliders) {
+      const props = obstacles.staticColliders;
+      for (let i = 0; i < props.length; i++) {
+        const prop = props[i];
+        if (prop.type === 'cylinder') {
+          const dx = this.position.x - prop.center.x;
+          const dz = this.position.z - prop.center.z;
+          const r = prop.radius || 0.4;
+          const h = prop.height || 4.5;
+
+          if (Math.abs(dx) > r + playerRadius || Math.abs(dz) > r + playerRadius) continue;
+          if (playerFeetY > prop.center.y + h || this.position.y + playerHeight / 2 < prop.center.y) continue;
+
+          const distSq = dx * dx + dz * dz;
+          const minDist = playerRadius + r;
+          if (distSq < minDist * minDist && distSq > 0.0001) {
+            const dist = Math.sqrt(distSq);
+            const push = minDist - dist;
+            const nx = dx / dist;
+            const nz = dz / dist;
+
+            this.position.x += nx * push;
+            this.position.z += nz * push;
+
+            const vDotN = this.velocity.x * nx + this.velocity.z * nz;
+            if (vDotN < 0) {
+              this.velocity.x -= vDotN * nx;
+              this.velocity.z -= vDotN * nz;
+            }
+          }
+        } else if (prop.type === 'box' && prop.box) {
+          const box = prop.box;
+          if (
+            this.position.x < box.min.x - playerRadius ||
+            this.position.x > box.max.x + playerRadius ||
+            this.position.z < box.min.z - playerRadius ||
+            this.position.z > box.max.z + playerRadius ||
+            this.position.y < box.min.y ||
+            this.position.y > box.max.y + playerHeight
+          ) {
+            continue;
+          }
+
+          const isAboveBox = this.position.y >= box.max.y;
+          if (isAboveBox && playerFeetY <= box.max.y + 0.25) {
+            if (this.velocity.y < -4) soundEngine.playLanding();
+            this.position.y = box.max.y + playerHeight / 2;
+            this.velocity.y = 0;
+            this.isOnRoof = true;
+            this.isOnGround = true;
+            this.hasAirZipped = false;
+            this.velocity.x *= 0.94;
+            this.velocity.z *= 0.94;
+            continue;
+          }
+
+          const dxMin = Math.abs(this.position.x - box.min.x);
+          const dxMax = Math.abs(this.position.x - box.max.x);
+          const dzMin = Math.abs(this.position.z - box.min.z);
+          const dzMax = Math.abs(this.position.z - box.max.z);
+          const minPen = Math.min(dxMin, dxMax, dzMin, dzMax);
+
+          if (minPen === dxMin) {
+            this.position.x = box.min.x - playerRadius;
+            if (this.velocity.x > 0) this.velocity.x = 0;
+          } else if (minPen === dxMax) {
+            this.position.x = box.max.x + playerRadius;
+            if (this.velocity.x < 0) this.velocity.x = 0;
+          } else if (minPen === dzMin) {
+            this.position.z = box.min.z - playerRadius;
+            if (this.velocity.z > 0) this.velocity.z = 0;
+          } else {
+            this.position.z = box.max.z + playerRadius;
+            if (this.velocity.z < 0) this.velocity.z = 0;
+          }
+        }
+      }
     }
   }
 

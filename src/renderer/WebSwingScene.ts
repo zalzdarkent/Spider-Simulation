@@ -849,7 +849,7 @@ export class WebSwingScene {
     const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
     // Physics step
-    this.physics.update(deltaTime, input, forward, right, this.city.buildings);
+    this.physics.update(deltaTime, input, forward, right, this.city.buildings, this.city.obstacles);
 
     // Audio wind update based on speed
     const currentSpeed = this.physics.velocity.length();

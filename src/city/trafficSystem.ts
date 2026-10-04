@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { modelManager } from '../renderer/modelManager';
 
 export interface Vehicle {
   group: THREE.Group;
@@ -11,6 +12,8 @@ export interface Vehicle {
   laneCoord: number; // constant coordinate on perpendicular axis
   minBound: number;
   maxBound: number;
+  isGlb?: boolean;
+  vehicleType?: 'taxi' | 'police' | 'sedan' | 'van';
 }
 
 export interface TrafficOptions {
@@ -28,6 +31,28 @@ export class TrafficSystem {
     this.group = new THREE.Group();
     this.group.name = 'TrafficSystemGroup';
     this.initVehicles(options);
+
+    modelManager.onModelsLoaded(() => {
+      this.upgradeToGLB();
+    });
+  }
+
+  private upgradeToGLB() {
+    this.vehicles.forEach((v) => {
+      if (v.isGlb) return;
+      const type = v.vehicleType || (v.isPolice ? 'police' : 'sedan');
+      const glb = modelManager.createCarInstance(type);
+      if (glb) {
+        while (v.group.children.length > 0) {
+          v.group.remove(v.group.children[0]);
+        }
+        v.group.add(glb.group);
+        v.policeBeacons = glb.policeBeacons;
+        v.isPolice = glb.isPolice;
+        v.wheels = [];
+        v.isGlb = true;
+      }
+    });
   }
 
   private initVehicles(options: TrafficOptions) {
@@ -120,6 +145,17 @@ export class TrafficSystem {
 
     // Helper: Create Vehicle mesh
     const createVehicleMesh = (type: 'taxi' | 'police' | 'sedan' | 'van') => {
+      const glbCar = modelManager.createCarInstance(type);
+      if (glbCar) {
+        return {
+          carGroup: glbCar.group,
+          wheels: [] as THREE.Mesh[],
+          isPolice: glbCar.isPolice,
+          policeBeacons: glbCar.policeBeacons,
+          isGlb: true,
+        };
+      }
+
       const carGroup = new THREE.Group();
       let wheels: THREE.Mesh[] = [];
       let policeBeacons: { red: THREE.Mesh; blue: THREE.Mesh } | undefined;
@@ -259,7 +295,7 @@ export class TrafficSystem {
 
         for (let c = 0; c < countOnAvenue; c++) {
           const vType = vehicleTypes[typeIndex++ % vehicleTypes.length];
-          const { carGroup, wheels, isPolice, policeBeacons } = createVehicleMesh(vType);
+          const { carGroup, wheels, isPolice, policeBeacons, isGlb } = createVehicleMesh(vType);
 
           const startZ = -380 + (c * 380 + aIdx * 75) % 760;
           carGroup.position.set(laneX, 0, startZ);
@@ -278,6 +314,8 @@ export class TrafficSystem {
             laneCoord: laneX,
             minBound: -430,
             maxBound: 430,
+            isGlb: Boolean(isGlb),
+            vehicleType: vType,
           });
         }
       }
@@ -291,7 +329,7 @@ export class TrafficSystem {
 
         for (let c = 0; c < countOnStreet; c++) {
           const vType = vehicleTypes[typeIndex++ % vehicleTypes.length];
-          const { carGroup, wheels, isPolice, policeBeacons } = createVehicleMesh(vType);
+          const { carGroup, wheels, isPolice, policeBeacons, isGlb } = createVehicleMesh(vType);
 
           const startX = -380 + (c * 380 + sIdx * 90) % 760;
           carGroup.position.set(startX, 0, laneZ);
@@ -310,6 +348,8 @@ export class TrafficSystem {
             laneCoord: laneZ,
             minBound: -430,
             maxBound: 430,
+            isGlb: Boolean(isGlb),
+            vehicleType: vType,
           });
         }
       }
@@ -367,5 +407,36 @@ export class TrafficSystem {
         v.policeBeacons.blue.visible = !policeFlash;
       }
     }
+  }
+
+  /**
+   * Returns bounding box colliders for all traffic vehicles (moving and parked)
+   */
+  public getColliders(): { box: THREE.Box3; isMoving: boolean }[] {
+    const list: { box: THREE.Box3; isMoving: boolean }[] = [];
+    const carHeight = 1.6;
+
+    for (let i = 0; i < this.vehicles.length; i++) {
+      const v = this.vehicles[i];
+      const pos = v.group.position;
+      const isZ = v.axis === 'z';
+      const halfLen = 2.35;
+      const halfW = 1.1;
+
+      const minX = isZ ? pos.x - halfW : pos.x - halfLen;
+      const maxX = isZ ? pos.x + halfW : pos.x + halfLen;
+      const minZ = isZ ? pos.z - halfLen : pos.z - halfW;
+      const maxZ = isZ ? pos.z + halfLen : pos.z + halfW;
+
+      list.push({
+        box: new THREE.Box3(
+          new THREE.Vector3(minX, 0, minZ),
+          new THREE.Vector3(maxX, carHeight, maxZ)
+        ),
+        isMoving: v.speed > 0,
+      });
+    }
+
+    return list;
   }
 }

@@ -1,8 +1,12 @@
 import * as THREE from 'three';
 import { RingCheckpoint } from '../types/physics';
-import { StreetPropsGenerator } from './streetProps';
+import { StreetPropsGenerator, PropCollider } from './streetProps';
 import { TrafficSystem } from './trafficSystem';
 import { PedestrianSystem } from './pedestrianSystem';
+import { createRoadNetwork } from './roadNetwork';
+import { createAvengersTower } from './avengersTower';
+import { createWaterSystem } from './waterSystem';
+import { CityObstacles } from '../physics/swingPhysics';
 
 export interface BuildingData {
   box: THREE.Box3;
@@ -23,6 +27,7 @@ export interface CityEnvironment {
   resetRings: () => void;
   updateRings: (time: number) => void;
   update?: (dt: number, time: number, heroPosition?: THREE.Vector3) => void;
+  obstacles: CityObstacles;
 }
 
 /**
@@ -125,169 +130,106 @@ function createHDBuildingTextures(): { map: THREE.CanvasTexture; emissiveMap: TH
     }
   }
 
-  ctx.globalAlpha = 1.0;
-  eCtx.globalAlpha = 1.0;
-
   const map = new THREE.CanvasTexture(canvas);
   map.wrapS = THREE.RepeatWrapping;
   map.wrapT = THREE.RepeatWrapping;
-  map.repeat.set(2, 6);
+  map.repeat.set(2, 4);
 
   const emissiveMap = new THREE.CanvasTexture(emissiveCanvas);
   emissiveMap.wrapS = THREE.RepeatWrapping;
   emissiveMap.wrapT = THREE.RepeatWrapping;
-  emissiveMap.repeat.set(2, 6);
+  emissiveMap.repeat.set(2, 4);
 
   return { map, emissiveMap };
 }
 
 /**
- * Creates high-definition ground asphalt & road markings texture (1024x1024)
+ * Creates rooftop neon signs for authentic NYC skyscraper atmosphere
  */
-function createHDRoadTexture(): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 1024;
-  const ctx = canvas.getContext('2d')!;
+function createNeonRooftopSign(text: string, colorHex: string): THREE.Group {
+  const group = new THREE.Group();
+  const width = 24;
+  const height = 7;
 
-  // 1. Dark asphalt with subtle fine noise grain
-  ctx.fillStyle = '#0b0f19';
-  ctx.fillRect(0, 0, 1024, 1024);
-
-  // Surface texture noise
-  for (let i = 0; i < 6000; i++) {
-    const nx = Math.random() * 1024;
-    const ny = Math.random() * 1024;
-    const gray = Math.floor(20 + Math.random() * 25);
-    ctx.fillStyle = `rgb(${gray},${gray},${gray})`;
-    ctx.fillRect(nx, ny, 2, 2);
-  }
-
-  // 2. Concrete sidewalks around block perimeters
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(0, 0, 1024, 48); // Top sidewalk
-  ctx.fillRect(0, 1024 - 48, 1024, 48); // Bottom sidewalk
-  ctx.fillRect(0, 0, 48, 1024); // Left sidewalk
-  ctx.fillRect(1024 - 48, 0, 48, 1024); // Right sidewalk
-
-  // Curbstone borders
-  ctx.strokeStyle = '#64748b';
-  ctx.lineWidth = 3;
-  ctx.strokeRect(48, 48, 1024 - 96, 1024 - 96);
-
-  // 3. Yellow Double Center Divider Lines
-  ctx.strokeStyle = '#eab308'; // Amber road paint
-  ctx.lineWidth = 4;
-  // Vertical center double lines
-  ctx.beginPath();
-  ctx.moveTo(508, 48);
-  ctx.lineTo(508, 1024 - 48);
-  ctx.moveTo(516, 48);
-  ctx.lineTo(516, 1024 - 48);
-  // Horizontal center double lines
-  ctx.moveTo(48, 508);
-  ctx.lineTo(1024 - 48, 508);
-  ctx.moveTo(48, 516);
-  ctx.lineTo(1024 - 48, 516);
-  ctx.stroke();
-
-  // 4. White Dashed Lane Dividers
-  ctx.strokeStyle = '#f8fafc';
-  ctx.lineWidth = 4;
-  ctx.setLineDash([28, 24]);
-
-  ctx.beginPath();
-  ctx.moveTo(278, 48);
-  ctx.lineTo(278, 1024 - 48);
-  ctx.moveTo(746, 48);
-  ctx.lineTo(746, 1024 - 48);
-  ctx.moveTo(48, 278);
-  ctx.lineTo(1024 - 48, 278);
-  ctx.moveTo(48, 746);
-  ctx.lineTo(1024 - 48, 746);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // 5. Zebra Crosswalks at intersections
-  ctx.fillStyle = '#f8fafc';
-  for (let i = 0; i < 7; i++) {
-    ctx.fillRect(80 + i * 56, 52, 34, 18);
-    ctx.fillRect(80 + i * 56, 1024 - 70, 34, 18);
-    ctx.fillRect(52, 80 + i * 56, 18, 34);
-    ctx.fillRect(1024 - 70, 80 + i * 56, 18, 34);
-  }
-
-  // 6. Manhole covers and storm drain grates
-  ctx.fillStyle = '#1e293b';
-  ctx.strokeStyle = '#475569';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(420, 420, 16, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.wrapS = THREE.RepeatWrapping;
-  texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(16, 16);
-  return texture;
-}
-
-/**
- * Creates procedural high-tech rooftop signage texture ("OSCORP", "DAILY BUGLE", etc.)
- */
-function createSignageTexture(text: string, color: string): THREE.CanvasTexture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
-  canvas.height = 128;
+  canvas.height = 160;
   const ctx = canvas.getContext('2d')!;
 
-  ctx.fillStyle = '#090d16';
-  ctx.fillRect(0, 0, 512, 128);
-
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 4;
-  ctx.strokeRect(4, 4, 504, 120);
-
-  ctx.fillStyle = color;
-  ctx.font = 'bold 52px "Chakra Petch", sans-serif';
+  ctx.clearRect(0, 0, 512, 160);
+  ctx.font = '900 84px -apple-system, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 18;
-  ctx.fillText(text, 256, 64);
 
-  return new THREE.CanvasTexture(canvas);
+  // Neon text glow
+  ctx.shadowColor = colorHex;
+  ctx.shadowBlur = 24;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, 256, 80);
+
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = colorHex;
+  ctx.strokeText(text, 256, 80);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  const signMat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+
+  const signGeo = new THREE.PlaneGeometry(width, height);
+  const signMesh = new THREE.Mesh(signGeo, signMat);
+  signMesh.position.y = height / 2 + 1.5;
+  group.add(signMesh);
+
+  // Structural steel scaffolding supporting the billboard
+  const scaffoldMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.9, roughness: 0.3 });
+  for (const sx of [-width / 2 + 1.5, width / 2 - 1.5]) {
+    const postGeo = new THREE.CylinderGeometry(0.18, 0.18, height + 3, 6);
+    const post = new THREE.Mesh(postGeo, scaffoldMat);
+    post.position.set(sx, (height + 3) / 2, -0.4);
+    group.add(post);
+
+    const braceGeo = new THREE.CylinderGeometry(0.12, 0.12, height * 1.3, 6);
+    const brace = new THREE.Mesh(braceGeo, scaffoldMat);
+    brace.position.set(sx, height / 2, -1.8);
+    brace.rotation.x = Math.PI / 5;
+    group.add(brace);
+  }
+
+  return group;
 }
 
 export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = 'sunset'): CityEnvironment {
   const group = new THREE.Group();
+  group.name = 'CityEnvironment';
+
   const buildings: BuildingData[] = [];
   const buildingMeshes: THREE.Mesh[] = [];
-
   const buildingTextures = createHDBuildingTextures();
-  const roadTexture = createHDRoadTexture();
 
-  // Color palettes tuned for time of day with rich HD atmosphere
+  // Dynamic color palette per time of day
   const palette = {
     sunset: {
-      facade: 0x334155,
-      roof: 0x1e293b,
+      facade: 0x242838,
+      roof: 0x181a24,
       trim: 0xf59e0b,
-      emissiveIntensity: 0.65,
-      ground: 0x0f172a,
+      emissiveIntensity: 0.85,
+      ground: 0x1e293b,
     },
     night: {
-      facade: 0x1e293b,
-      roof: 0x0f172a,
-      trim: 0x06b6d4,
-      emissiveIntensity: 1.1,
-      ground: 0x030712,
+      facade: 0x0f172a,
+      roof: 0x090d16,
+      trim: 0x38bdf8,
+      emissiveIntensity: 1.25,
+      ground: 0x090d16,
     },
     day: {
-      facade: 0x64748b,
+      facade: 0x475569,
       roof: 0x334155,
-      trim: 0x0284c7,
+      trim: 0xe2e8f0,
       emissiveIntensity: 0.25,
       ground: 0x1e293b,
     },
@@ -300,18 +242,61 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     },
   }[timeOfDay];
 
-  // Ground plane with HD road textures
-  const groundGeo = new THREE.PlaneGeometry(1800, 1800);
-  const groundMat = new THREE.MeshStandardMaterial({
-    map: roadTexture,
-    roughness: 0.85,
-    metalness: 0.15,
+  // Expanded Urban Grid dimensions: 10x10 city grid (100 blocks = 1040m wide Manhattan island)
+  const blockCount = 10;
+  const blockSize = 68; // size of each building lot
+  const streetWidth = 36;
+  const gridStep = blockSize + streetWidth; // 104m
+  const originOffset = ((blockCount - 1) * gridStep) / 2; // 468m
+  const islandWidth = blockCount * gridStep; // 1040m
+
+  // Central Park coordinates: 2x2 blocks in North-Central Manhattan (centered around X = 0, Z = 208)
+  const parkBlocks = [
+    { ix: 4, iz: 6 },
+    { ix: 5, iz: 6 },
+    { ix: 4, iz: 7 },
+    { ix: 5, iz: 7 },
+  ];
+
+  // Avengers Tower coordinate: Midtown Manhattan
+  const avengersBlock = { ix: 4, iz: 3 };
+
+  // Calculate avenue (N-S) and street (E-W) coordinates
+  const avenues: number[] = [];
+  const streets: number[] = [];
+  for (let i = 0; i < blockCount - 1; i++) {
+    const coord = (i + 0.5) * gridStep - originOffset;
+    avenues.push(coord);
+    streets.push(coord);
+  }
+
+  // Realistic Road Network: Asphalt Roadways, Elevated Concrete Sidewalks, Park Greenery, and Crisp Markings
+  const roadNetwork = createRoadNetwork({
+    avenues,
+    streets,
+    blockCount,
+    blockSize,
+    streetWidth,
+    originOffset,
+    timeOfDay,
+    parkBlocks,
   });
-  const groundMesh = new THREE.Mesh(groundGeo, groundMat);
-  groundMesh.rotation.x = -Math.PI / 2;
-  groundMesh.position.y = 0;
-  groundMesh.receiveShadow = true;
-  group.add(groundMesh);
+  group.add(roadNetwork.group);
+  const groundMesh = roadNetwork.groundMesh;
+
+  // Surrounding Ocean, Hudson River, East River, Central Park Lake, and Waterfront Promenade
+  const lakeCenter = new THREE.Vector3(0, 0, (6.5 * gridStep) - originOffset);
+  const lakeRadiusX = 56;
+  const lakeRadiusZ = 46;
+
+  const waterSystem = createWaterSystem({
+    islandWidth,
+    lakeCenter,
+    lakeRadiusX,
+    lakeRadiusZ,
+    timeOfDay,
+  });
+  group.add(waterSystem.group);
 
   // Common HD building materials
   const buildingMat = new THREE.MeshStandardMaterial({
@@ -331,13 +316,13 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   });
 
   const waterTankMat = new THREE.MeshStandardMaterial({
-    color: 0x78350f, // Rich cedar wood
+    color: 0x78350f,
     roughness: 0.8,
     metalness: 0.1,
   });
 
   const steelStiltMat = new THREE.MeshStandardMaterial({
-    color: 0x334155, // Industrial steel
+    color: 0x334155,
     roughness: 0.4,
     metalness: 0.8,
   });
@@ -350,18 +335,11 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   const corporateSigns = [
     { text: 'OSCORP', color: '#10b981' },
     { text: 'DAILY BUGLE', color: '#ef4444' },
-    { text: 'AVENGERS', color: '#06b6d4' },
-    { text: 'STARK', color: '#f59e0b' },
-    { text: 'WEBSWING', color: '#38bdf8' },
+    { text: 'BAXTER', color: '#38bdf8' },
+    { text: 'RAND CORP', color: '#f59e0b' },
+    { text: 'WEBSWING', color: '#06b6d4' },
   ];
   let signIdx = 0;
-
-  // Generate Urban Blocks
-  const blockCount = 8;
-  const blockSize = 68; // size of each building lot
-  const streetWidth = 36;
-  const gridStep = blockSize + streetWidth;
-  const originOffset = ((blockCount - 1) * gridStep) / 2;
 
   // Track rooftop points for spawning aerial checkpoints
   const rooftopAnchors: THREE.Vector3[] = [];
@@ -371,12 +349,27 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
       const cx = ix * gridStep - originOffset + (Math.random() - 0.5) * 6;
       const cz = iz * gridStep - originOffset + (Math.random() - 0.5) * 6;
 
-      // Distance from center determines skyline height (higher in central financial district)
-      const distFromCenter = Math.sqrt(cx * cx + cz * cz);
-      const centerFactor = Math.max(0.3, 1.0 - distFromCenter / 450);
+      // 1. Central Park Cutout (No skyscrapers! Open lake, lawn, and park trees)
+      const isPark = parkBlocks.some((p) => p.ix === ix && p.iz === iz);
+      if (isPark) {
+        continue;
+      }
 
-      // Heights range between 55m to 210m
-      const baseHeight = 60 + Math.random() * 60 + centerFactor * 90;
+      // 2. Avengers Tower (Soaring 380m Stark skyscraper with Quinjet helipad & illuminated logos)
+      if (ix === avengersBlock.ix && iz === avengersBlock.iz) {
+        const avengersTower = createAvengersTower(cx, cz);
+        group.add(avengersTower.group);
+        buildings.push(...avengersTower.buildings);
+        buildingMeshes.push(...avengersTower.buildingMeshes);
+        rooftopAnchors.push(...avengersTower.rooftopAnchors);
+        continue;
+      }
+
+      // 3. Regular Skyscraper generation
+      const distFromCenter = Math.sqrt(cx * cx + cz * cz);
+      const centerFactor = Math.max(0.3, 1.0 - distFromCenter / 550);
+
+      const baseHeight = 60 + Math.random() * 65 + centerFactor * 105;
       const bWidth = blockSize * (0.76 + Math.random() * 0.24);
       const bDepth = blockSize * (0.76 + Math.random() * 0.24);
 
@@ -387,7 +380,6 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
       towerMesh.castShadow = true;
       towerMesh.receiveShadow = true;
 
-      // User data for raycasting identification
       towerMesh.userData = { isBuilding: true, height: baseHeight };
       group.add(towerMesh);
       buildingMeshes.push(towerMesh);
@@ -431,136 +423,125 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
           isRoofStructure: true,
         });
 
-        // Glowing crown trim on high-rises
-        if (baseHeight > 105) {
-          const trimGeo = new THREE.BoxGeometry(tier2Width + 0.8, 1.4, tier2Depth + 0.8);
-          const trimMesh = new THREE.Mesh(trimGeo, neonTrimMat);
-          trimMesh.position.set(cx, baseHeight + tier2Height, cz);
-          group.add(trimMesh);
+        // Glowing neon roof perimeter trim
+        const trimGeo = new THREE.BoxGeometry(tier2Width + 0.8, 0.45, tier2Depth + 0.8);
+        const trimMesh = new THREE.Mesh(trimGeo, neonTrimMat);
+        trimMesh.position.set(cx, baseHeight + tier2Height, cz);
+        group.add(trimMesh);
 
-          // Tall antenna spire
-          const mastGeo = new THREE.CylinderGeometry(0.3, 0.7, 22, 8);
-          const mastMesh = new THREE.Mesh(mastGeo, roofMat);
-          mastMesh.position.set(cx, baseHeight + tier2Height + 11, cz);
-          group.add(mastMesh);
+        rooftopAnchors.push(new THREE.Vector3(cx, baseHeight + tier2Height, cz));
+      }
 
-          // Pulsing red beacon light at antenna tip
-          const beaconGeo = new THREE.SphereGeometry(0.9, 12, 12);
-          const beaconMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
-          const beaconMesh = new THREE.Mesh(beaconGeo, beaconMat);
-          beaconMesh.position.set(cx, baseHeight + tier2Height + 22, cz);
-          group.add(beaconMesh);
+      // Rooftop props
+      const propRoll = Math.random();
+      const roofY = baseHeight;
 
-          // Select megatowers get an illuminated neon corporate sign
-          if (signIdx < corporateSigns.length && Math.random() > 0.4) {
-            const signData = corporateSigns[signIdx++];
-            const signTex = createSignageTexture(signData.text, signData.color);
-            const signGeo = new THREE.PlaneGeometry(tier2Width * 0.85, 9);
-            const signMat = new THREE.MeshBasicMaterial({
-              map: signTex,
-              side: THREE.DoubleSide,
-            });
-            const signMesh = new THREE.Mesh(signGeo, signMat);
-            signMesh.position.set(cx, baseHeight + tier2Height - 5, cz + tier2Depth / 2 + 0.3);
-            group.add(signMesh);
+      if (propRoll > 0.72) {
+        // Helipad
+        const padRadius = Math.min(bWidth, bDepth) * 0.34;
+        const padGeo = new THREE.CylinderGeometry(padRadius, padRadius, 0.35, 24);
+        const padMesh = new THREE.Mesh(padGeo, roofMat);
+        padMesh.position.set(cx, roofY + 0.18, cz);
+        padMesh.receiveShadow = true;
+        group.add(padMesh);
+
+        // Helipad "H" Marking
+        const hCanvas = document.createElement('canvas');
+        hCanvas.width = 256;
+        hCanvas.height = 256;
+        const hCtx = hCanvas.getContext('2d')!;
+        hCtx.fillStyle = '#0f172a';
+        hCtx.fillRect(0, 0, 256, 256);
+        hCtx.strokeStyle = '#eab308';
+        hCtx.lineWidth = 14;
+        hCtx.beginPath();
+        hCtx.arc(128, 128, 108, 0, Math.PI * 2);
+        hCtx.stroke();
+        hCtx.fillStyle = '#f8fafc';
+        hCtx.font = 'bold 120px sans-serif';
+        hCtx.textAlign = 'center';
+        hCtx.textBaseline = 'middle';
+        hCtx.fillText('H', 128, 132);
+
+        const hTex = new THREE.CanvasTexture(hCanvas);
+        const hMat = new THREE.MeshBasicMaterial({ map: hTex });
+        const hPlane = new THREE.Mesh(new THREE.PlaneGeometry(padRadius * 1.6, padRadius * 1.6), hMat);
+        hPlane.rotation.x = -Math.PI / 2;
+        hPlane.position.set(cx, roofY + 0.36, cz);
+        group.add(hPlane);
+      } else if (propRoll > 0.45) {
+        // NYC Wooden Water Tower
+        const tankHeight = 5.2;
+        const tankRadius = 2.4;
+        const tankGeo = new THREE.CylinderGeometry(tankRadius, tankRadius, tankHeight, 16);
+        const tankMesh = new THREE.Mesh(tankGeo, waterTankMat);
+        tankMesh.position.set(cx + 6, roofY + 3.2 + tankHeight / 2, cz + 6);
+        tankMesh.castShadow = true;
+        group.add(tankMesh);
+
+        // Conical Roof cap
+        const capGeo = new THREE.ConeGeometry(tankRadius * 1.15, 2.2, 16);
+        const capMesh = new THREE.Mesh(capGeo, roofMat);
+        capMesh.position.set(cx + 6, roofY + 3.2 + tankHeight + 1.1, cz + 6);
+        group.add(capMesh);
+
+        // Steel Stilt Legs
+        for (const ox of [-1.8, 1.8]) {
+          for (const oz of [-1.8, 1.8]) {
+            const stiltGeo = new THREE.CylinderGeometry(0.12, 0.12, 3.2, 6);
+            const stilt = new THREE.Mesh(stiltGeo, steelStiltMat);
+            stilt.position.set(cx + 6 + ox, roofY + 1.6, cz + 6 + oz);
+            stilt.castShadow = true;
+            group.add(stilt);
           }
         }
-      } else if (featureChance > 0.55) {
-        // Helipad on flat rooftop
-        const helipadGeo = new THREE.CylinderGeometry(11, 11, 0.4, 24);
-        const helipadMat = new THREE.MeshStandardMaterial({
-          color: 0x1e293b,
-          roughness: 0.8,
-          metalness: 0.2,
-        });
-        const helipadMesh = new THREE.Mesh(helipadGeo, helipadMat);
-        helipadMesh.position.set(cx, baseHeight + 0.2, cz);
-        group.add(helipadMesh);
-
-        // Helipad yellow circle border
-        const ringGeo = new THREE.RingGeometry(8.5, 9.8, 32);
-        const ringMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, side: THREE.DoubleSide });
-        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-        ringMesh.rotation.x = -Math.PI / 2;
-        ringMesh.position.set(cx, baseHeight + 0.42, cz);
-        group.add(ringMesh);
-      } else if (featureChance > 0.25) {
-        // Classic NYC Wooden Cedar Water Tower on rooftop
-        const tankGroup = new THREE.Group();
-        tankGroup.position.set(
-          cx + (Math.random() - 0.5) * (bWidth * 0.35),
-          baseHeight,
-          cz + (Math.random() - 0.5) * (bDepth * 0.35)
-        );
-
-        // Steel support stilts
-        const stiltGeo = new THREE.CylinderGeometry(0.2, 0.2, 5, 6);
-        for (let s = 0; s < 4; s++) {
-          const stilt = new THREE.Mesh(stiltGeo, steelStiltMat);
-          const angle = (s * Math.PI) / 2;
-          stilt.position.set(Math.cos(angle) * 2.2, 2.5, Math.sin(angle) * 2.2);
-          tankGroup.add(stilt);
-        }
-
-        // Wooden cylinder barrel
-        const barrelGeo = new THREE.CylinderGeometry(2.8, 2.8, 5.5, 16);
-        const barrelMesh = new THREE.Mesh(barrelGeo, waterTankMat);
-        barrelMesh.position.y = 7.75;
-        tankGroup.add(barrelMesh);
-
-        // Conical roof cap
-        const capGeo = new THREE.ConeGeometry(3.1, 2.2, 16);
-        const capMesh = new THREE.Mesh(capGeo, roofMat);
-        capMesh.position.y = 11.5;
-        tankGroup.add(capMesh);
-
-        group.add(tankGroup);
+      } else if (propRoll > 0.25 && signIdx < corporateSigns.length) {
+        // Corporate Neon Billboard
+        const sInfo = corporateSigns[signIdx++];
+        const sign = createNeonRooftopSign(sInfo.text, sInfo.color);
+        sign.position.set(cx, roofY, cz);
+        group.add(sign);
       } else {
-        // Heavy industrial rooftop HVAC chillers with circular fans
-        const hvacGeo = new THREE.BoxGeometry(9, 4.5, 9);
-        const hvacMesh = new THREE.Mesh(hvacGeo, roofMat);
-        hvacMesh.position.set(
-          cx + (Math.random() - 0.5) * (bWidth * 0.4),
-          baseHeight + 2.25,
-          cz + (Math.random() - 0.5) * (bDepth * 0.4)
-        );
-        group.add(hvacMesh);
+        // Transmission Antenna / Spire
+        const antHeight = 22 + Math.random() * 20;
+        const antGeo = new THREE.CylinderGeometry(0.12, 0.45, antHeight, 8);
+        const antMesh = new THREE.Mesh(antGeo, steelStiltMat);
+        antMesh.position.set(cx, roofY + antHeight / 2, cz);
+        antMesh.castShadow = true;
+        group.add(antMesh);
 
-        // Circular fan exhaust on top
-        const fanGeo = new THREE.CylinderGeometry(2.8, 2.8, 0.8, 16);
-        const fanMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.3 });
-        const fanMesh = new THREE.Mesh(fanGeo, fanMat);
-        fanMesh.position.set(hvacMesh.position.x, baseHeight + 4.9, hvacMesh.position.z);
-        group.add(fanMesh);
+        // Red flashing warning beacon light
+        const lightGeo = new THREE.SphereGeometry(0.5, 8, 8);
+        const lightMat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
+        const lightMesh = new THREE.Mesh(lightGeo, lightMat);
+        lightMesh.position.set(cx, roofY + antHeight, cz);
+        group.add(lightMesh);
       }
     }
   }
 
-  // Generate Aerial Ring Checkpoints Course for Ring Challenge mode
+  // Waypoints for aerial web-swinging ring challenges: through avenues, Central Park Lake, and Avengers Tower!
+  const courseWaypoints: [number, number, number][] = [
+    [0, 36, -60],
+    [-52, 218, -156], // Avengers Tower Helipad pass!
+    [-104, 85, -50],
+    [-208, 62, 50],
+    [-104, 52, 120],
+    [0, 38, 208], // Central Park Lake sweep!
+    [104, 58, 140],
+    [208, 70, 40],
+    [104, 55, -80],
+    [0, 48, -120],
+  ];
+
   const checkpointRings: RingCheckpoint[] = [];
   const ringMeshes: THREE.Group[] = [];
-
-  const courseWaypoints: [number, number, number][] = [
-    [0, 55, 60],
-    [50, 48, 110],
-    [100, 62, 70],
-    [140, 75, 0],
-    [110, 58, -80],
-    [30, 45, -120],
-    [-60, 52, -100],
-    [-110, 68, -40],
-    [-90, 54, 40],
-    [-30, 48, 90],
-    [0, 65, 140],
-    [70, 72, 170],
-  ];
 
   courseWaypoints.forEach((pt, idx) => {
     const ringGroup = new THREE.Group();
     ringGroup.position.set(pt[0], pt[1], pt[2]);
 
-    // Torus ring geometry
-    const ringGeo = new THREE.TorusGeometry(5.2, 0.45, 16, 32);
+    const ringGeo = new THREE.TorusGeometry(5.4, 0.45, 16, 32);
     const ringMat = new THREE.MeshStandardMaterial({
       color: 0x06b6d4,
       emissive: 0x0891b2,
@@ -571,8 +552,7 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     const ringMesh = new THREE.Mesh(ringGeo, ringMat);
     ringGroup.add(ringMesh);
 
-    // Inner glowing ring pulse
-    const innerGeo = new THREE.RingGeometry(0.1, 4.8, 24);
+    const innerGeo = new THREE.RingGeometry(0.1, 5.0, 24);
     const innerMat = new THREE.MeshBasicMaterial({
       color: 0x22d3ee,
       transparent: true,
@@ -582,7 +562,6 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     const innerMesh = new THREE.Mesh(innerGeo, innerMat);
     ringGroup.add(innerMesh);
 
-    // Orient ring toward next waypoint
     const nextPt = courseWaypoints[(idx + 1) % courseWaypoints.length];
     const lookTarget = new THREE.Vector3(nextPt[0], nextPt[1], nextPt[2]);
     ringGroup.lookAt(lookTarget);
@@ -593,7 +572,7 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     checkpointRings.push({
       id: idx,
       position: pt,
-      radius: 5.2,
+      radius: 5.4,
       normal: [0, 0, 1],
       collected: false,
     });
@@ -632,22 +611,21 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     });
   };
 
-  // Calculate avenue (N-S) and street (E-W) coordinates
-  const avenues: number[] = [];
-  const streets: number[] = [];
-  for (let i = 0; i < blockCount - 1; i++) {
-    const coord = (i + 0.5) * gridStep - originOffset;
-    avenues.push(coord);
-    streets.push(coord);
-  }
-
   // Generate Street Props (Trees, Street Lamps, Benches, Hydrants, Bus Shelters, Mailboxes)
-  const streetProps = StreetPropsGenerator.createProps({
+  const parkArea = {
+    minX: 4 * gridStep - originOffset - 36,
+    maxX: 5 * gridStep - originOffset + 36,
+    minZ: 6 * gridStep - originOffset - 36,
+    maxZ: 7 * gridStep - originOffset + 36,
+  };
+
+  const streetPropsResult = StreetPropsGenerator.createProps({
     timeOfDay,
     avenues,
     streets,
+    parkArea,
   });
-  group.add(streetProps);
+  group.add(streetPropsResult.group);
 
   // Generate Dynamic Traffic Fleet (Taxis, Police Cruisers, Sedans, Delivery Vans, Parked Cars)
   const trafficSystem = new TrafficSystem({
@@ -665,8 +643,30 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   });
   group.add(pedestrianSystem.group);
 
+  // Consolidate static and dynamic obstacle colliders
+  const staticColliders: PropCollider[] = [
+    ...streetPropsResult.colliders,
+  ];
+
+  waterSystem.seawallColliders.forEach((w) => {
+    staticColliders.push({
+      type: 'box',
+      center: new THREE.Vector3((w.min.x + w.max.x) / 2, (w.min.y + w.max.y) / 2, (w.min.z + w.max.z) / 2),
+      box: new THREE.Box3(w.min, w.max),
+    });
+  });
+
+  const obstacles: CityObstacles = {
+    staticColliders,
+    getVehicleColliders: () => trafficSystem.getColliders(),
+    getPedestrianColliders: () => pedestrianSystem.getColliders(),
+    isWaterAt: (x, z) => waterSystem.isWaterAt(x, z),
+    getWaterLevel: (x, z) => waterSystem.getWaterLevel(x, z),
+  };
+
   const update = (dt: number, time: number, heroPosition?: THREE.Vector3) => {
     updateRings(time);
+    waterSystem.update(time);
     trafficSystem.update(dt);
     pedestrianSystem.update(dt, heroPosition);
   };
@@ -682,5 +682,6 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     resetRings,
     updateRings,
     update,
+    obstacles,
   };
 }
