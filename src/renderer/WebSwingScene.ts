@@ -869,7 +869,13 @@ export class WebSwingScene {
 
     // Checkpoint ring collisions
     this.checkRingCollisions();
-    this.city.updateRings(time * 0.001);
+
+    // City life update (moving traffic, animated pedestrian NPCs, and ring pulses)
+    if (this.city.update) {
+      this.city.update(deltaTime, time * 0.001, this.physics.position);
+    } else {
+      this.city.updateRings(time * 0.001);
+    }
 
     // Speed particles update
     this.updateSpeedParticles(currentSpeed, forward);

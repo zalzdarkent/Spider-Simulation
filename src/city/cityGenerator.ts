@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { RingCheckpoint } from '../types/physics';
+import { StreetPropsGenerator } from './streetProps';
+import { TrafficSystem } from './trafficSystem';
+import { PedestrianSystem } from './pedestrianSystem';
 
 export interface BuildingData {
   box: THREE.Box3;
@@ -19,6 +22,7 @@ export interface CityEnvironment {
   collectRing: (id: number) => boolean;
   resetRings: () => void;
   updateRings: (time: number) => void;
+  update?: (dt: number, time: number, heroPosition?: THREE.Vector3) => void;
 }
 
 /**
@@ -628,6 +632,45 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     });
   };
 
+  // Calculate avenue (N-S) and street (E-W) coordinates
+  const avenues: number[] = [];
+  const streets: number[] = [];
+  for (let i = 0; i < blockCount - 1; i++) {
+    const coord = (i + 0.5) * gridStep - originOffset;
+    avenues.push(coord);
+    streets.push(coord);
+  }
+
+  // Generate Street Props (Trees, Street Lamps, Benches, Hydrants, Bus Shelters, Mailboxes)
+  const streetProps = StreetPropsGenerator.createProps({
+    timeOfDay,
+    avenues,
+    streets,
+  });
+  group.add(streetProps);
+
+  // Generate Dynamic Traffic Fleet (Taxis, Police Cruisers, Sedans, Delivery Vans, Parked Cars)
+  const trafficSystem = new TrafficSystem({
+    timeOfDay,
+    avenues,
+    streets,
+  });
+  group.add(trafficSystem.group);
+
+  // Generate Pedestrian NPCs (Sidewalk Walkers, Rooftop Citizens, Cheering Reactions)
+  const pedestrianSystem = new PedestrianSystem({
+    avenues,
+    streets,
+    rooftops: rooftopAnchors,
+  });
+  group.add(pedestrianSystem.group);
+
+  const update = (dt: number, time: number, heroPosition?: THREE.Vector3) => {
+    updateRings(time);
+    trafficSystem.update(dt);
+    pedestrianSystem.update(dt, heroPosition);
+  };
+
   return {
     group,
     buildings,
@@ -638,5 +681,6 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     collectRing,
     resetRings,
     updateRings,
+    update,
   };
 }
