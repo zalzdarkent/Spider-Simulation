@@ -12,6 +12,7 @@ export interface PlayerInput {
   reelIn: boolean;
   fireWeb: boolean;
   releaseWeb: boolean;
+  sprint?: boolean;
 }
 
 export class SwingPhysics {
@@ -271,24 +272,28 @@ export class SwingPhysics {
           soundEngine.playJump();
         }
       } else {
-        // Ground / Rooftop movement
-        const moveSpeed = 16.0;
+        // Ground / Rooftop locomotion (Walking vs Superhero Sprinting)
+        const isSprinting = Boolean(input.sprint || input.reelIn);
+        const moveSpeed = isSprinting ? 28.0 : 12.0;
         const flatForward = this._tempVec.set(cameraForward.x, 0, cameraForward.z).normalize();
-        this.velocity.x *= 0.88;
-        this.velocity.z *= 0.88;
+        const friction = isSprinting ? 0.93 : 0.86;
+        this.velocity.x *= friction;
+        this.velocity.z *= friction;
 
-        if (input.forward) this.velocity.addScaledVector(flatForward, moveSpeed * 3 * dt);
-        if (input.backward) this.velocity.addScaledVector(flatForward, -moveSpeed * 3 * dt);
-        if (input.left) this.velocity.addScaledVector(cameraRight, -moveSpeed * 3 * dt);
-        if (input.right) this.velocity.addScaledVector(cameraRight, moveSpeed * 3 * dt);
+        const accel = moveSpeed * 3.6;
+        if (input.forward) this.velocity.addScaledVector(flatForward, accel * dt);
+        if (input.backward) this.velocity.addScaledVector(flatForward, -accel * dt);
+        if (input.left) this.velocity.addScaledVector(cameraRight, -accel * dt);
+        if (input.right) this.velocity.addScaledVector(cameraRight, accel * dt);
 
         // Ground / Rooftop Superhero Launch Jump
         if (jumpTriggered) {
           this.velocity.y = 22.0; // High superhero vertical leap
-          if (input.forward) this.velocity.addScaledVector(flatForward, 10.0);
-          if (input.backward) this.velocity.addScaledVector(flatForward, -10.0);
-          if (input.left) this.velocity.addScaledVector(cameraRight, -10.0);
-          if (input.right) this.velocity.addScaledVector(cameraRight, 10.0);
+          const forwardBoost = isSprinting ? 16.0 : 10.0;
+          if (input.forward) this.velocity.addScaledVector(flatForward, forwardBoost);
+          if (input.backward) this.velocity.addScaledVector(flatForward, -forwardBoost);
+          if (input.left) this.velocity.addScaledVector(cameraRight, -forwardBoost);
+          if (input.right) this.velocity.addScaledVector(cameraRight, forwardBoost);
           this.isOnGround = false;
           this.isOnRoof = false;
           this.hasAirZipped = false;

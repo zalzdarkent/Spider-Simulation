@@ -77,6 +77,7 @@ export default function App() {
     right: false,
     jump: false,
     reelIn: false,
+    sprint: false,
     fireWeb: false,
     releaseWeb: false,
   });
@@ -262,6 +263,7 @@ export default function App() {
         case 'ShiftLeft':
         case 'ShiftRight':
           inputRef.current.reelIn = true;
+          inputRef.current.sprint = true;
           break;
 
         // Camera Pan with Q and E (Left hand)
@@ -372,6 +374,7 @@ export default function App() {
         case 'ShiftLeft':
         case 'ShiftRight':
           inputRef.current.reelIn = false;
+          inputRef.current.sprint = false;
           break;
 
         case 'KeyQ':
@@ -533,6 +536,9 @@ export default function App() {
     inputRef.current.right = x > deadzone;
     inputRef.current.forward = y < -deadzone;
     inputRef.current.backward = y > deadzone;
+    const mag = Math.hypot(x, y);
+    inputRef.current.sprint = mag > 0.75;
+    inputRef.current.reelIn = mag > 0.75;
   };
 
   // Audio Toggle

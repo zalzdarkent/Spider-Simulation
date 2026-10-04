@@ -385,7 +385,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </kbd>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400">Lari & Kendali Arah</span>
+                    <span className="text-slate-400">Jalan & Berbalik Badan</span>
                     <kbd className="px-2 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono text-[11px] border border-slate-700">
                       W A S D
                     </kbd>
@@ -397,9 +397,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </kbd>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
-                    <span className="text-slate-400">Tarik Jaring Pendek</span>
+                    <span className="text-slate-400">Sprint (Lari Cepat) / Tarik Tali</span>
                     <kbd className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700">
-                      SHIFT / W
+                      SHIFT / TAHAN MAJU
                     </kbd>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
