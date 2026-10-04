@@ -24,6 +24,9 @@ import {
   CheckCircle2,
   Shield,
   Zap,
+  Car,
+  Users,
+  Trees,
 } from 'lucide-react';
 import { EnergyGraph } from './EnergyGraph';
 
@@ -797,6 +800,47 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                   <span className="text-[11px] text-slate-400">Deru angin dan desis tembakan jaring</span>
                 </button>
+              </div>
+
+              {/* Living City Assets Info Box */}
+              <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/30 via-slate-900 to-sky-950/30 border border-emerald-500/30 space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="text-xs font-bold uppercase tracking-wider text-emerald-300 font-['Chakra_Petch']">
+                    Ekosistem Kota Aktif (Living City)
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-start gap-2.5">
+                    <Car className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-white block">Lalu Lintas Kendaraan</span>
+                      <p className="text-[11px] text-slate-400 leading-relaxed mt-0.5">
+                        Taksi kuning NYC, mobil patroli polisi NYPD dengan sirine strobo, sedan, dan van logistik berkeliling kota.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-start gap-2.5">
+                    <Users className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-white block">Warga & Pejalan Kaki (NPC)</span>
+                      <p className="text-[11px] text-slate-400 leading-relaxed mt-0.5">
+                        Pejalan kaki berjalan di trotoar dan bersantai di rooftop. Mereka akan bersorak gembira saat Spider-Man berayun dekat!
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 flex items-start gap-2.5">
+                    <Trees className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-white block">Aset Pendukung Jalanan</span>
+                      <p className="text-[11px] text-slate-400 leading-relaxed mt-0.5">
+                        Pepohonan rimbun, lampu jalan klasik Manhattan, hidran merah, bangku taman trotoar, dan halte transit bus.
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
