@@ -32,6 +32,13 @@ export class WebSwingScene {
   private cameraTarget: THREE.Vector3 = new THREE.Vector3();
   private baseFOV: number = 68;
 
+  // Dynamic camera sway & rear-view
+  private cameraSwayOffset: THREE.Vector3 = new THREE.Vector3();
+  private currentCameraRoll: number = 0;
+  private isLookBehindActive: boolean = false;
+  private rearLookYaw: number = 0;
+  private swingBreatheTimer: number = 0;
+
   // Character hierarchy
   private characterGroup: THREE.Group;
   private spidermanInstance?: SpidermanInstance;
@@ -824,8 +831,25 @@ export class WebSwingScene {
     this.physics.reset(spawnPos || new THREE.Vector3(0, 75, 40));
     this.smoothedHeroPos.copy(this.physics.position);
     this.currentCamDistance = this.cameraDistance;
+    this.cameraSwayOffset.set(0, 0, 0);
+    this.currentCameraRoll = 0;
+    this.rearLookYaw = 0;
+    this.isLookBehindActive = false;
     this.city.resetRings();
     this.ringsCollectedCount = 0;
+  }
+
+  public setLookBehind(active: boolean) {
+    this.isLookBehindActive = active;
+  }
+
+  public isLookingBehind(): boolean {
+    return this.isLookBehindActive;
+  }
+
+  public toggleLookBehind(): boolean {
+    this.isLookBehindActive = !this.isLookBehindActive;
+    return this.isLookBehindActive;
   }
 
   /**
@@ -937,9 +961,8 @@ export class WebSwingScene {
       this.lastFpsUpdate = time;
     }
 
-    // Camera Direction Vectors
-    const forward = new THREE.Vector3();
-    this.camera.getWorldDirection(forward);
+    // Movement heading vectors (always relative to player's primary camera yaw so look-behind doesn't invert controls)
+    const forward = new THREE.Vector3(Math.sin(this.cameraYaw), 0, Math.cos(this.cameraYaw));
     const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
     // Physics step
@@ -1150,14 +1173,24 @@ export class WebSwingScene {
       this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
       this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.25);
 
+      // 3D direction vector from hero shoulder to web anchor in character local space
+      const toAnchorWorld = new THREE.Vector3()
+        .subVectors(this.physics.anchorPoint, this.physics.position)
+        .normalize();
+      const toAnchorLocal = toAnchorWorld
+        .clone()
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.characterGroup.rotation.y);
+      const armElev = Math.atan2(toAnchorLocal.y, Math.hypot(toAnchorLocal.x, toAnchorLocal.z));
+      const armYaw = Math.atan2(toAnchorLocal.x, toAnchorLocal.z);
+
       // Spider-Man GLB: Right arm raised high towards web anchor, Left arm counter-balancing
       targetTorsoX = -0.15 + swingPitch;
       targetTorsoY = 0;
       targetTorsoZ = bankAngle;
       targetHeadX = -swingPitch * 0.6;
       targetHeadY = -bankAngle * 0.4;
-      targetArmRX = 1.30; // Raised high forward and up to web
-      targetArmRZ = -0.85; // Raised upward
+      targetArmRX = THREE.MathUtils.clamp(armElev + 0.45, 0.6, 1.6);
+      targetArmRZ = THREE.MathUtils.clamp(-0.70 - armYaw * 0.35, -1.2, -0.3);
       targetArmLX = -0.45; // Swept back in balance flourish
       targetArmLZ = 0.65; // Extended outward
       if (vel.y > 0) {
@@ -1175,15 +1208,8 @@ export class WebSwingScene {
       targetRootY = -0.88;
 
       // Fallback procedural hero posing
-      const toAnchorWorld = new THREE.Vector3()
-        .subVectors(this.physics.anchorPoint, this.physics.position)
-        .normalize();
-      const toAnchorLocal = toAnchorWorld
-        .clone()
-        .applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.characterGroup.rotation.y);
-      const armElev = Math.atan2(-toAnchorLocal.y, Math.hypot(toAnchorLocal.x, toAnchorLocal.z));
-      const armYaw = Math.atan2(toAnchorLocal.x, toAnchorLocal.z);
-      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, armElev - Math.PI * 0.5, 0.28);
+      const armElevProc = Math.atan2(-toAnchorLocal.y, Math.hypot(toAnchorLocal.x, toAnchorLocal.z));
+      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, armElevProc - Math.PI * 0.5, 0.28);
       this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, armYaw * 0.5, 0.28);
       this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.55, 0.25);
       this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.85, 0.22);
@@ -1504,20 +1530,79 @@ export class WebSwingScene {
     const lerpSpeed = Math.min(1.0, 16.0 * dt);
     this.smoothedHeroPos.lerp(heroPos, lerpSpeed);
 
-    // Gentle, non-dizzying dynamic FOV widening (68 up to 76 deg max)
+    // Dynamic FOV widening with speed (68 up to 76 deg max)
     const speedRatio = Math.min(1.0, speed / 60);
     const targetFOV = this.baseFOV + speedRatio * 8;
     this.camera.fov = THREE.MathUtils.lerp(this.camera.fov, targetFOV, Math.min(1.0, 4.0 * dt));
     this.camera.updateProjectionMatrix();
 
+    // Smooth rear-view yaw interpolation (0 when front, Math.PI when looking behind)
+    const targetRearYaw = this.isLookBehindActive ? Math.PI : 0;
+    this.rearLookYaw = THREE.MathUtils.lerp(this.rearLookYaw, targetRearYaw, Math.min(1.0, 16.0 * dt));
+    const effectiveYaw = this.cameraYaw + this.rearLookYaw;
+
+    // --- Dynamic Camera Sway Animation ---
+    // Extract velocity components relative to camera view frame
+    const vel = this.physics.velocity;
+    const forwardDir = new THREE.Vector3(Math.sin(effectiveYaw), 0, Math.cos(effectiveYaw));
+    const rightDir = new THREE.Vector3(Math.cos(effectiveYaw), 0, -Math.sin(effectiveYaw));
+
+    const lateralVel = vel.dot(rightDir);   // Lateral drift / banking velocity
+    const forwardVel = vel.dot(forwardDir); // Forward rush / speed
+    const verticalVel = vel.y;              // Vertical ascent or dive velocity
+
+    // 1. Dynamic Camera Roll (Dutch Angle / Banking)
+    // Banks subtly into turns and swing arcs (max ~3.8 degrees = ~0.065 rad)
+    let targetRoll = -THREE.MathUtils.clamp((lateralVel / 32.0) * 0.045, -0.065, 0.065);
+
+    // Dynamic pendulum centrifugal roll when attached to web
+    if (this.physics.isAttached && this.physics.anchorPoint) {
+      const ropeVec = new THREE.Vector3().subVectors(this.smoothedHeroPos, this.physics.anchorPoint);
+      const ropeLateral = ropeVec.dot(rightDir) / Math.max(2, this.physics.ropeLength);
+      const pendulumRoll = THREE.MathUtils.clamp(-ropeLateral * 0.035, -0.04, 0.04);
+      targetRoll += pendulumRoll;
+    }
+    targetRoll = THREE.MathUtils.clamp(targetRoll, -0.075, 0.075);
+    this.currentCameraRoll = THREE.MathUtils.lerp(this.currentCameraRoll, targetRoll, Math.min(1.0, 9.0 * dt));
+
+    // 2. Dynamic Camera Sway Offset (Translational Sway)
+    // - Lateral sway follows centrifugal movement
+    // - Vertical sway emphasizes dive/climb G-force
+    // - Forward sway adds momentum compression
+    const targetSwayX = -THREE.MathUtils.clamp((lateralVel / 30.0) * 0.45, -0.65, 0.65);
+    const targetSwayY = THREE.MathUtils.clamp(-verticalVel * 0.016, -0.5, 0.65);
+    const targetSwayZ = -THREE.MathUtils.clamp((forwardVel / 35.0) * 0.45, -0.7, 0.4);
+
+    const targetWorldSway = new THREE.Vector3()
+      .addScaledVector(rightDir, targetSwayX)
+      .add(new THREE.Vector3(0, targetSwayY, 0))
+      .addScaledVector(forwardDir, targetSwayZ);
+
+    // Subtle harmonic pendulum sway while swinging
+    if (this.physics.isAttached) {
+      this.swingBreatheTimer += dt * Math.min(5.0, 1.2 + speed / 20.0);
+      const harmonicOsc = Math.sin(this.swingBreatheTimer) * 0.08 * Math.min(1.0, speed / 15.0);
+      const harmonicLift = Math.cos(this.swingBreatheTimer * 0.5) * 0.04;
+      targetWorldSway.addScaledVector(rightDir, harmonicOsc);
+      targetWorldSway.y += harmonicLift;
+    }
+
+    this.cameraSwayOffset.lerp(targetWorldSway, Math.min(1.0, 8.0 * dt));
+
     if (this.cameraMode === 'first_person') {
-      // First person view: camera placed right at head/visor
-      this.camera.position.set(this.smoothedHeroPos.x, this.smoothedHeroPos.y + 1.1, this.smoothedHeroPos.z);
+      // First person view: camera placed right at head/visor with subtle velocity sway
+      const fpSway = this.cameraSwayOffset.clone().multiplyScalar(0.25);
+      this.camera.position.set(
+        this.smoothedHeroPos.x + fpSway.x,
+        this.smoothedHeroPos.y + 1.1 + fpSway.y,
+        this.smoothedHeroPos.z + fpSway.z
+      );
       const lookDist = 10;
-      const targetX = this.smoothedHeroPos.x + Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
+      const targetX = this.smoothedHeroPos.x + Math.sin(effectiveYaw) * Math.cos(this.cameraPitch) * lookDist;
       const targetY = this.smoothedHeroPos.y + 1.1 + Math.sin(this.cameraPitch) * lookDist;
-      const targetZ = this.smoothedHeroPos.z + Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch) * lookDist;
+      const targetZ = this.smoothedHeroPos.z + Math.cos(effectiveYaw) * Math.cos(this.cameraPitch) * lookDist;
       this.camera.lookAt(targetX, targetY, targetZ);
+      this.camera.rotateZ(this.currentCameraRoll * 0.8);
       this.characterGroup.visible = false;
       return;
     }
@@ -1532,47 +1617,64 @@ export class WebSwingScene {
       this.smoothedHeroPos.z
     );
 
-    // Raycast backwards from hero head to detect building walls smoothly
+    // If climbing on a wall, offset ray origin away from the wall so raycaster starts in open air
+    if (this.physics.isClimbing && this.physics.wallNormal.lengthSq() > 0.05) {
+      heroHead.addScaledVector(this.physics.wallNormal, 0.45);
+    }
+
+    // Raycast backwards from hero head to detect building walls smoothly (using effectiveYaw for rear view)
     const rayDir = new THREE.Vector3(
-      -Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch),
+      -Math.sin(effectiveYaw) * Math.cos(this.cameraPitch),
       -Math.sin(this.cameraPitch) + 0.1,
-      -Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch)
+      -Math.cos(effectiveYaw) * Math.cos(this.cameraPitch)
     ).normalize();
 
     let targetDist = this.cameraDistance;
-    const camRaycaster = new THREE.Raycaster(heroHead, rayDir, 0.4, this.cameraDistance);
+    const camRaycaster = new THREE.Raycaster(heroHead, rayDir, 0.35, this.cameraDistance);
     const hits = camRaycaster.intersectObjects(this.city.buildingMeshes, false);
     if (hits.length > 0) {
-      targetDist = Math.max(2.2, hits[0].distance - 0.5);
+      targetDist = Math.max(0.7, hits[0].distance - 0.25);
     }
 
     // Smooth camera distance interpolation (prevents violent popping/shaking near walls!)
     this.currentCamDistance = THREE.MathUtils.lerp(
       this.currentCamDistance,
       targetDist,
-      Math.min(1.0, 8.0 * dt)
+      Math.min(1.0, 10.0 * dt)
     );
 
     const horizontalDist = this.currentCamDistance * Math.cos(this.cameraPitch);
     const verticalDist = 1.6 - this.currentCamDistance * Math.sin(this.cameraPitch);
 
     const targetCamPos = new THREE.Vector3(
-      this.smoothedHeroPos.x - Math.sin(this.cameraYaw) * horizontalDist,
-      Math.max(1.0, this.smoothedHeroPos.y + verticalDist),
-      this.smoothedHeroPos.z - Math.cos(this.cameraYaw) * horizontalDist
+      heroHead.x - Math.sin(effectiveYaw) * horizontalDist,
+      heroHead.y + verticalDist - 1.1,
+      heroHead.z - Math.cos(effectiveYaw) * horizontalDist
     );
+
+    // Ensure camera never sinks into street pavement or rooftop floor
+    const minFloorY = (this.physics.isOnRoof || this.physics.isOnGround)
+      ? this.smoothedHeroPos.y + 0.35
+      : 1.0;
+    targetCamPos.y = Math.max(minFloorY, targetCamPos.y);
+
+    // Apply dynamic velocity sway offset
+    targetCamPos.add(this.cameraSwayOffset);
 
     // Smoothly position camera
     this.camera.position.lerp(targetCamPos, lerpSpeed);
 
     // Look comfortably ahead and slightly over Peter's head towards city skyline
     const lookTarget = new THREE.Vector3(
-      this.smoothedHeroPos.x,
-      this.smoothedHeroPos.y + 1.2 + Math.sin(this.cameraPitch) * (this.currentCamDistance * 0.4),
-      this.smoothedHeroPos.z
+      heroHead.x,
+      heroHead.y + 0.1 + Math.sin(this.cameraPitch) * (this.currentCamDistance * 0.4),
+      heroHead.z
     );
     this.cameraTarget.lerp(lookTarget, lerpSpeed);
     this.camera.lookAt(this.cameraTarget);
+
+    // Apply dynamic camera roll sway (Dutch tilt banking)
+    this.camera.rotateZ(this.currentCameraRoll);
   }
 
   private updateWebRope() {
@@ -1583,9 +1685,11 @@ export class WebSwingScene {
 
       // Hero shooter hand position from actual right wrist web-shooter nozzle in 3D world space
       const handPos = new THREE.Vector3();
-      if (this.isGlbHero && this.spidermanInstance?.armR) {
-        this.spidermanInstance.armR.getWorldPosition(handPos);
-        handPos.y -= 0.12;
+      if (this.isGlbHero && this.spidermanInstance?.handR) {
+        this.spidermanInstance.handR.getWorldPosition(handPos);
+      } else if (this.isGlbHero && this.spidermanInstance?.armR) {
+        handPos.set(2.85, 3.35, 0.25);
+        this.spidermanInstance.armR.localToWorld(handPos);
       } else if (this.rightNozzleMesh) {
         this.rightNozzleMesh.getWorldPosition(handPos);
       } else {

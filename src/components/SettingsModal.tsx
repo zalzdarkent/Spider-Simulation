@@ -400,6 +400,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </kbd>
                   </div>
                   <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
+                    <span className="text-slate-400">Lihat ke Belakang (Rear View)</span>
+                    <kbd className="px-2 py-0.5 rounded bg-slate-800 text-amber-300 font-mono text-[11px] border border-slate-700 font-bold">
+                      X
+                    </kbd>
+                  </div>
+                  <div className="p-2.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between">
                     <span className="text-slate-400">Sprint (Lari Cepat) / Tarik Tali</span>
                     <kbd className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono text-[11px] border border-slate-700">
                       SHIFT / TAHAN MAJU

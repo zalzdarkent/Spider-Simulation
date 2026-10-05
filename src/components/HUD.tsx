@@ -1,6 +1,6 @@
 import React from 'react';
 import { TelemetryData, GameMode } from '../types/physics';
-import { Gauge, Crosshair, ArrowUp, Award, Settings, RotateCcw, Volume2, VolumeX, BarChart2 } from 'lucide-react';
+import { Gauge, Crosshair, ArrowUp, Award, Settings, RotateCcw, Volume2, VolumeX, BarChart2, Eye } from 'lucide-react';
 
 interface HUDProps {
   telemetry: TelemetryData;
@@ -14,6 +14,8 @@ interface HUDProps {
   onToggleMute: () => void;
   onOpenSettings: (initialTab?: 'controls' | 'telemetry' | 'physics' | 'environment' | 'tutorial') => void;
   onReset: () => void;
+  isLookingBehind?: boolean;
+  onToggleLookBehind?: () => void;
 }
 
 export const HUD: React.FC<HUDProps> = ({
@@ -28,6 +30,8 @@ export const HUD: React.FC<HUDProps> = ({
   onToggleMute,
   onOpenSettings,
   onReset,
+  isLookingBehind = false,
+  onToggleLookBehind,
 }) => {
   const displaySpeed = Math.round(speedUnit === 'mph' ? telemetry.speedMph : telemetry.speedMps);
   const speedUnitLabel = speedUnit === 'mph' ? 'MPH' : 'M/S';
@@ -100,6 +104,25 @@ export const HUD: React.FC<HUDProps> = ({
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-sky-400" />}
           </button>
 
+          {/* Quick Look Behind (Rear View) Button */}
+          {onToggleLookBehind && (
+            <button
+              onClick={onToggleLookBehind}
+              title="Lihat ke Belakang / Rear View [X]"
+              className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-semibold backdrop-blur-md transition-all flex items-center gap-1.5 active:scale-95 shadow-lg ${
+                isLookingBehind
+                  ? 'bg-amber-400 border-amber-300 text-slate-950 font-black shadow-amber-400/25'
+                  : 'bg-slate-900/80 hover:bg-slate-800 border-slate-800/90 text-slate-300 hover:text-white'
+              }`}
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Belakang</span>
+              <kbd className={`text-[10px] font-mono font-bold ${isLookingBehind ? 'text-slate-950' : 'text-amber-400'}`}>
+                X
+              </kbd>
+            </button>
+          )}
+
           {/* Quick Reset Button */}
           <button
             onClick={onReset}
@@ -125,6 +148,16 @@ export const HUD: React.FC<HUDProps> = ({
           </button>
         </div>
       </header>
+
+      {/* Rear View Look Behind Indicator */}
+      {isLookingBehind && (
+        <div className="absolute top-16 md:top-20 left-1/2 -translate-x-1/2 pointer-events-none z-30 animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-amber-400 text-slate-950 font-black text-xs font-['Chakra_Petch'] tracking-widest shadow-2xl shadow-amber-400/40 border-2 border-amber-300">
+            <Eye className="w-4 h-4 animate-pulse" />
+            <span>PANDANGAN BELAKANG [X]</span>
+          </div>
+        </div>
+      )}
 
       {/* Screen Crosshair Target (Subtle & Dynamic) */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none flex items-center justify-center">

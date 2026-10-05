@@ -110,6 +110,10 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({ onClose }) => {
               <span className="text-white font-semibold">W / Shift</span>
             </div>
             <div className="p-2 rounded-lg bg-slate-800/40 border border-slate-800 flex justify-between">
+              <span className="text-slate-400">Look Behind (Rear View)</span>
+              <span className="text-amber-300 font-semibold">X</span>
+            </div>
+            <div className="p-2 rounded-lg bg-slate-800/40 border border-slate-800 flex justify-between">
               <span className="text-slate-400">Quick Reset</span>
               <span className="text-white font-semibold">R</span>
             </div>

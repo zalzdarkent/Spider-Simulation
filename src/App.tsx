@@ -99,6 +99,11 @@ export default function App() {
   const isMouseDownRef = useRef<boolean>(false);
   const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Look Behind (Rear View) with key X
+  const xPressTimeRef = useRef<number>(0);
+  const isLookingBehindRef = useRef<boolean>(false);
+  const [isLookingBehind, setIsLookingBehind] = useState<boolean>(false);
+
   // Mobile camera drag ref
   const touchCamIdRef = useRef<number | null>(null);
   const lastTouchCamPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -242,6 +247,15 @@ export default function App() {
     }
   };
 
+  // Toggle Look Behind helper
+  const handleToggleLookBehind = useCallback(() => {
+    if (sceneRef.current) {
+      const next = sceneRef.current.toggleLookBehind();
+      setIsLookingBehind(next);
+      isLookingBehindRef.current = next;
+    }
+  }, []);
+
   // Keyboard Event Handlers
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -294,9 +308,8 @@ export default function App() {
           keyboardCamRef.current.down = true;
           break;
 
-        // Jump / Air-Zip / Super Jump Release (Spider-Man Jump System)
+        // Jump / Air-Zip / Super Jump Release (Spider-Man Jump System - SPACE ONLY)
         case 'Space':
-        case 'KeyX':
           e.preventDefault();
           inputRef.current.jump = true;
           // In mid-air, if player already air-zipped and is targeting an anchor, Space also acts as web launch
@@ -306,6 +319,23 @@ export default function App() {
               sceneRef.current?.triggerWebShoot();
               inputRef.current.fireWeb = true;
             }
+          }
+          break;
+
+        // Look Behind (Rear View) - Press / Hold 'X' in ANY condition (on rooftop, climbing, swinging, falling)
+        case 'KeyX':
+          e.preventDefault();
+          if (e.repeat) break;
+          xPressTimeRef.current = performance.now();
+          if (!isLookingBehindRef.current) {
+            sceneRef.current?.setLookBehind(true);
+            setIsLookingBehind(true);
+            isLookingBehindRef.current = true;
+          } else {
+            // Tapping again toggles off
+            sceneRef.current?.setLookBehind(false);
+            setIsLookingBehind(false);
+            isLookingBehindRef.current = false;
           }
           break;
 
@@ -402,10 +432,21 @@ export default function App() {
           keyboardCamRef.current.down = false;
           break;
 
+        // Jump - Space Only
         case 'Space':
-        case 'KeyX':
           inputRef.current.jump = false;
           break;
+
+        // Look Behind release (if held for > 200ms, returns camera forward immediately upon release)
+        case 'KeyX': {
+          const duration = performance.now() - xPressTimeRef.current;
+          if (duration > 200 && isLookingBehindRef.current) {
+            sceneRef.current?.setLookBehind(false);
+            setIsLookingBehind(false);
+            isLookingBehindRef.current = false;
+          }
+          break;
+        }
 
         case 'KeyF':
         case 'Enter':
@@ -424,11 +465,19 @@ export default function App() {
       }
     };
 
+    const handleBlur = () => {
+      isLookingBehindRef.current = false;
+      sceneRef.current?.setLookBehind(false);
+      setIsLookingBehind(false);
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
     };
   }, [toggleSwingMode]);
 
@@ -593,6 +642,8 @@ export default function App() {
           sceneRef.current?.resetPosition();
           setRingCount(0);
         }}
+        isLookingBehind={isLookingBehind}
+        onToggleLookBehind={handleToggleLookBehind}
       />
 
       {/* Real-time STEM Energy Graph in bottom-right (optional on HUD) */}
@@ -631,6 +682,8 @@ export default function App() {
             setRingCount(0);
           }}
           isAttached={telemetry.isAttached}
+          isLookingBehind={isLookingBehind}
+          onToggleLookBehind={handleToggleLookBehind}
         />
       )}
 

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { RotateCcw, ArrowUp, Zap } from 'lucide-react';
+import { RotateCcw, ArrowUp, Zap, Eye, ChevronUp } from 'lucide-react';
 
 interface MobileControlsProps {
   onJoystickMove: (x: number, y: number) => void;
@@ -10,6 +10,8 @@ interface MobileControlsProps {
   onJump: () => void;
   onReset: () => void;
   isAttached: boolean;
+  isLookingBehind?: boolean;
+  onToggleLookBehind?: () => void;
 }
 
 export const MobileControls: React.FC<MobileControlsProps> = ({
@@ -21,6 +23,8 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
   onJump,
   onReset,
   isAttached,
+  isLookingBehind = false,
+  onToggleLookBehind,
 }) => {
   const joystickBaseRef = useRef<HTMLDivElement>(null);
   const [knobPos, setKnobPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -100,19 +104,54 @@ export const MobileControls: React.FC<MobileControlsProps> = ({
 
       {/* Right Action Buttons */}
       <div className="pointer-events-auto flex flex-col items-end gap-3 touch-none">
-        {/* Top auxiliary: Reel In & Reset */}
+        {/* Top auxiliary: Rear View, Reset, Jump & Reel In */}
         <div className="flex items-center gap-2">
+          {/* Look Behind (Rear View) Button */}
+          {onToggleLookBehind && (
+            <button
+              onClick={onToggleLookBehind}
+              className={`w-11 h-11 rounded-full border flex flex-col items-center justify-center shadow-lg active:scale-95 transition-transform text-[9px] font-bold font-mono ${
+                isLookingBehind
+                  ? 'bg-amber-400 border-amber-300 text-slate-950 font-black shadow-amber-400/30'
+                  : 'bg-slate-900/80 border-slate-700 text-slate-300'
+              }`}
+              title="Lihat ke Belakang / Rear View"
+            >
+              <Eye className="w-4 h-4" />
+              <span>REAR</span>
+            </button>
+          )}
+
           <button
             onClick={onReset}
             className="w-11 h-11 rounded-full bg-slate-900/80 border border-slate-700 text-slate-300 flex items-center justify-center shadow-lg active:scale-95 transition-transform"
+            title="Reset Posisi"
           >
             <RotateCcw className="w-5 h-5" />
+          </button>
+
+          {/* Dedicated Jump Button */}
+          <button
+            onTouchStart={(e) => {
+              e.preventDefault();
+              onJump();
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              onJump();
+            }}
+            className="w-12 h-12 rounded-full bg-emerald-600/90 border border-emerald-400 text-white flex flex-col items-center justify-center shadow-lg active:scale-95 transition-transform text-[9px] font-bold font-mono"
+            title="Lompat [SPASI]"
+          >
+            <ChevronUp className="w-5 h-5" />
+            <span>JUMP</span>
           </button>
 
           <button
             onTouchStart={onReelInDown}
             onTouchEnd={onReelInUp}
             className="w-12 h-12 rounded-full bg-amber-600/90 border border-amber-400 text-white flex flex-col items-center justify-center shadow-lg active:scale-95 transition-transform text-[10px] font-bold font-mono"
+            title="Tarik Tali Jaring"
           >
             <ArrowUp className="w-4 h-4" />
             <span>REEL</span>

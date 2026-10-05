@@ -21,6 +21,8 @@ export interface SpidermanInstance {
   armL?: THREE.Object3D;
   shoulderR?: THREE.Object3D;
   armR?: THREE.Object3D;
+  handR?: THREE.Object3D;
+  handL?: THREE.Object3D;
   legL?: THREE.Object3D;
   legR?: THREE.Object3D;
   initialQuats: Map<string, THREE.Quaternion>;
@@ -285,6 +287,23 @@ class ModelManager {
     const legL = findBone(['LegL_6', 'Leg.L_6', 'LegL', 'Leg_L']);
     const legR = findBone(['LegR_7', 'Leg.R_7', 'LegR', 'Leg_R']);
 
+    // Dedicated web-shooter nozzle anchors positioned precisely at the right and left wrists/palms
+    let handR: THREE.Object3D | undefined;
+    if (armR) {
+      handR = new THREE.Object3D();
+      handR.name = 'SpiderMan_Right_WebShooter';
+      handR.position.set(2.85, 3.35, 0.25);
+      armR.add(handR);
+    }
+
+    let handL: THREE.Object3D | undefined;
+    if (armL) {
+      handL = new THREE.Object3D();
+      handL.name = 'SpiderMan_Left_WebShooter';
+      handL.position.set(-2.85, 3.35, 0.25);
+      armL.add(handL);
+    }
+
     const initialQuats = new Map<string, THREE.Quaternion>();
     const bonePairs = [
       { key: 'root', bone: rootBone },
@@ -313,6 +332,8 @@ class ModelManager {
       armL,
       shoulderR,
       armR,
+      handR,
+      handL,
       legL,
       legR,
       initialQuats,
