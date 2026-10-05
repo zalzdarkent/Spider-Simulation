@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export interface NpcInstance {
   group: THREE.Group;
@@ -11,10 +12,27 @@ export interface NpcInstance {
   rightHand?: THREE.Object3D;
 }
 
+export interface SpidermanInstance {
+  group: THREE.Group;
+  rootBone?: THREE.Object3D;
+  torsoBone?: THREE.Object3D;
+  headBone?: THREE.Object3D;
+  shoulderL?: THREE.Object3D;
+  armL?: THREE.Object3D;
+  shoulderR?: THREE.Object3D;
+  armR?: THREE.Object3D;
+  legL?: THREE.Object3D;
+  legR?: THREE.Object3D;
+  initialQuats: Map<string, THREE.Quaternion>;
+}
+
 export interface CarInstance {
   group: THREE.Group;
   isPolice?: boolean;
   policeBeacons?: { red: THREE.Mesh; blue: THREE.Mesh };
+  taillights?: THREE.Mesh[];
+  leftBlinkers?: THREE.Mesh[];
+  rightBlinkers?: THREE.Mesh[];
 }
 
 class ModelManager {
@@ -68,39 +86,51 @@ class ModelManager {
 
   private loadSpiderman(): Promise<void> {
     return new Promise((resolve) => {
-      this.loader.load(
-        '/models/spiderman.glb',
-        (gltf) => {
-          const root = gltf.scene;
+      const tryLoad = (url: string, fallbackUrl?: string) => {
+        this.loader.load(
+          url,
+          (gltf) => {
+            const root = gltf.scene;
 
-          // Configure shadows & materials
-          root.traverse((obj) => {
-            if ((obj as THREE.Mesh).isMesh) {
-              const m = obj as THREE.Mesh;
-              m.castShadow = true;
-              m.receiveShadow = true;
-              if (m.material) {
-                const mats = Array.isArray(m.material) ? m.material : [m.material];
-                mats.forEach((mat) => {
-                  mat.depthWrite = true;
-                  if ('roughness' in mat) (mat as THREE.MeshStandardMaterial).roughness = 0.45;
-                  if ('metalness' in mat) (mat as THREE.MeshStandardMaterial).metalness = 0.2;
-                });
+            // Configure shadows & materials
+            root.traverse((obj) => {
+              if ((obj as THREE.Mesh).isMesh) {
+                const m = obj as THREE.Mesh;
+                m.castShadow = true;
+                m.receiveShadow = true;
+                if ((m as THREE.SkinnedMesh).isSkinnedMesh) {
+                  m.frustumCulled = false;
+                }
+                if (m.material) {
+                  const mats = Array.isArray(m.material) ? m.material : [m.material];
+                  mats.forEach((mat) => {
+                    mat.depthWrite = true;
+                    mat.side = THREE.DoubleSide;
+                    if ('roughness' in mat) (mat as THREE.MeshStandardMaterial).roughness = 0.42;
+                    if ('metalness' in mat) (mat as THREE.MeshStandardMaterial).metalness = 0.25;
+                  });
+                }
               }
-            }
-          });
+            });
 
-          this.spidermanTemplate = root;
-          this.isSpidermanLoaded = true;
-          this.notify();
-          resolve();
-        },
-        undefined,
-        (err) => {
-          console.warn('Failed to load spiderman.glb:', err);
-          resolve();
-        }
-      );
+            this.spidermanTemplate = root;
+            this.isSpidermanLoaded = true;
+            this.notify();
+            resolve();
+          },
+          undefined,
+          (err) => {
+            if (fallbackUrl) {
+              tryLoad(fallbackUrl);
+            } else {
+              console.warn('Failed to load spiderman.glb:', err);
+              resolve();
+            }
+          }
+        );
+      };
+
+      tryLoad('/models/spiderman.glb', '/src/model/spiderman.glb');
     });
   }
 
@@ -182,29 +212,111 @@ class ModelManager {
 
   /**
    * Spawns a configured 3D Spider-Man model instance.
-   * Model dimensions: natural height ~33.95 units.
+   * Model dimensions: natural height ~17.397 units, minY ~ -5.7352.
    * Scaled to target human height ~1.85m.
    */
-  public createSpidermanInstance(): THREE.Group | null {
+  public createSpidermanInstance(): SpidermanInstance | null {
     if (!this.spidermanTemplate) return null;
 
     const wrapper = new THREE.Group();
     wrapper.name = 'SpidermanGLBWrapper';
 
-    const clone = this.spidermanTemplate.clone(true);
+    // Must clone with SkeletonUtils so the SkinnedMesh attaches to its own cloned skeleton!
+    const clone = cloneSkeleton(this.spidermanTemplate) as THREE.Group;
 
     // Target height: 1.85m
     const targetHeight = 1.85;
-    const rawHeight = 33.9558;
-    const scale = targetHeight / rawHeight;
+    const rawHeight = 17.3971;
+    const scale = targetHeight / rawHeight; // ~0.10634
     clone.scale.setScalar(scale);
 
-    // Center bottom: the raw model minY is -16.978, so offset Y by +16.978 * scale
-    // This puts the feet at wrapper Y = 0.
-    clone.position.set(0, 16.9779 * scale, 0);
+    // Center bottom: raw model minY is -5.7352 (bottom of feet in model space).
+    // The physics position of characterGroup corresponds to the player capsule center (y = +0.9m).
+    // To position the feet on the pavement (y = 0.0m) when characterGroup is at y = 0.9m:
+    // the feet must be at -0.9m in wrapper space.
+    // Scaled model feet are at -5.7352 * scale ≈ -0.61m.
+    // Setting clone.position.y = -0.90 - (-5.7352 * scale) ≈ -0.29m places feet precisely at -0.90m.
+    const feetOffsetY = -0.90 - (-5.7352 * scale);
+    clone.position.set(0, feetOffsetY, 0);
+
+    // Ensure all SkinnedMeshes have frustum culling disabled so they never vanish during movement/anims
+    clone.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const m = obj as THREE.Mesh;
+        m.castShadow = true;
+        m.receiveShadow = true;
+        if ((m as THREE.SkinnedMesh).isSkinnedMesh) {
+          m.frustumCulled = false;
+        }
+      }
+    });
 
     wrapper.add(clone);
-    return wrapper;
+
+    // Flexible bone search matching sanitized names from Three.js GLTFLoader
+    const findBone = (candidates: string[]): THREE.Object3D | undefined => {
+      for (const name of candidates) {
+        const found = clone.getObjectByName(name);
+        if (found) return found;
+      }
+      let matched: THREE.Object3D | undefined;
+      clone.traverse((child) => {
+        if (!matched && (child as THREE.Bone).isBone) {
+          const cleanName = child.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          for (const name of candidates) {
+            const cleanCand = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (cleanName === cleanCand) {
+              matched = child;
+              return;
+            }
+          }
+        }
+      });
+      return matched;
+    };
+
+    const rootBone = findBone(['Root_8', 'Root', 'GLTF_created_0_rootJoint']);
+    const torsoBone = findBone(['Torso_5', 'Torso', 'spine']);
+    const headBone = findBone(['Head_0', 'Head']);
+    const shoulderL = findBone(['ShoulderL_2', 'Shoulder.L_2', 'ShoulderL', 'Shoulder_L']);
+    const armL = findBone(['ArmL_1', 'Arm.L_1', 'ArmL', 'Arm_L']);
+    const shoulderR = findBone(['ShoulderR_4', 'Shoulder.R_4', 'ShoulderR', 'Shoulder_R']);
+    const armR = findBone(['ArmR_3', 'Arm.R_3', 'ArmR', 'Arm_R']);
+    const legL = findBone(['LegL_6', 'Leg.L_6', 'LegL', 'Leg_L']);
+    const legR = findBone(['LegR_7', 'Leg.R_7', 'LegR', 'Leg_R']);
+
+    const initialQuats = new Map<string, THREE.Quaternion>();
+    const bonePairs = [
+      { key: 'root', bone: rootBone },
+      { key: 'torso', bone: torsoBone },
+      { key: 'head', bone: headBone },
+      { key: 'shoulderL', bone: shoulderL },
+      { key: 'armL', bone: armL },
+      { key: 'shoulderR', bone: shoulderR },
+      { key: 'armR', bone: armR },
+      { key: 'legL', bone: legL },
+      { key: 'legR', bone: legR },
+    ];
+    bonePairs.forEach(({ key, bone }) => {
+      if (bone) {
+        initialQuats.set(key, bone.quaternion.clone());
+        initialQuats.set(bone.name, bone.quaternion.clone());
+      }
+    });
+
+    return {
+      group: wrapper,
+      rootBone,
+      torsoBone,
+      headBone,
+      shoulderL,
+      armL,
+      shoulderR,
+      armR,
+      legL,
+      legR,
+      initialQuats,
+    };
   }
 
   /**
@@ -226,9 +338,9 @@ class ModelManager {
     clone.scale.setScalar(scale);
 
     // Rotate so car front points along +Z
-    // In car.glb, length is along X, front is along +X or -X.
-    // Rotating around Y by -Math.PI / 2 points length along Z
-    clone.rotation.y = -Math.PI / 2;
+    // In car.glb, length is along X, front/hood is along -X.
+    // Rotating around Y by +Math.PI / 2 points front/hood along +Z (fixing backwards driving!)
+    clone.rotation.y = Math.PI / 2;
 
     // Offset so bottom of wheels touches ground (minY is -2.618)
     clone.position.set(0, 2.618 * scale, 0);
@@ -276,6 +388,63 @@ class ModelManager {
 
     carGroup.add(clone);
 
+    // Headlights (at front +Z)
+    const headlightMat = new THREE.MeshBasicMaterial({ color: 0xfff7ed });
+    const headGeo = new THREE.BoxGeometry(0.3, 0.12, 0.08);
+    for (const hx of [-0.75, 0.75]) {
+      const hl = new THREE.Mesh(headGeo, headlightMat);
+      hl.position.set(hx, 0.65, 2.36);
+      carGroup.add(hl);
+    }
+
+    // Taillights / Brake lights (at rear -Z)
+    const taillightMat = new THREE.MeshStandardMaterial({
+      color: 0x991b1b,
+      emissive: 0xef4444,
+      emissiveIntensity: 0.6,
+      roughness: 0.2,
+    });
+    const tailGeo = new THREE.BoxGeometry(0.32, 0.14, 0.08);
+    const taillights: THREE.Mesh[] = [];
+    for (const tx of [-0.75, 0.75]) {
+      const tl = new THREE.Mesh(tailGeo, taillightMat.clone());
+      tl.position.set(tx, 0.65, -2.36);
+      carGroup.add(tl);
+      taillights.push(tl);
+    }
+
+    // Amber Turn Signal Blinkers
+    const blinkerMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b });
+    const blinkerGeo = new THREE.BoxGeometry(0.12, 0.1, 0.12);
+
+    const leftBlinkers: THREE.Mesh[] = [];
+    // Front left & rear left
+    const blF = new THREE.Mesh(blinkerGeo, blinkerMat.clone());
+    blF.position.set(-0.95, 0.65, 2.25);
+    blF.visible = false;
+    carGroup.add(blF);
+    leftBlinkers.push(blF);
+
+    const blR = new THREE.Mesh(blinkerGeo, blinkerMat.clone());
+    blR.position.set(-0.95, 0.65, -2.25);
+    blR.visible = false;
+    carGroup.add(blR);
+    leftBlinkers.push(blR);
+
+    const rightBlinkers: THREE.Mesh[] = [];
+    // Front right & rear right
+    const brF = new THREE.Mesh(blinkerGeo, blinkerMat.clone());
+    brF.position.set(0.95, 0.65, 2.25);
+    brF.visible = false;
+    carGroup.add(brF);
+    rightBlinkers.push(brF);
+
+    const brR = new THREE.Mesh(blinkerGeo, blinkerMat.clone());
+    brR.position.set(0.95, 0.65, -2.25);
+    brR.visible = false;
+    carGroup.add(brR);
+    rightBlinkers.push(brR);
+
     // If taxi: add a glowing yellow roof sign
     if (type === 'taxi') {
       const signGeo = new THREE.BoxGeometry(0.7, 0.22, 0.32);
@@ -304,7 +473,7 @@ class ModelManager {
       policeBeacons = { red: redBeacon, blue: blueBeacon };
     }
 
-    return { group: carGroup, isPolice, policeBeacons };
+    return { group: carGroup, isPolice, policeBeacons, taillights, leftBlinkers, rightBlinkers };
   }
 
   /**

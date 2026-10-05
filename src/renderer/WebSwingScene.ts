@@ -3,6 +3,7 @@ import { SwingPhysics, PlayerInput } from '../physics/swingPhysics';
 import { CityEnvironment, generateCity } from '../city/cityGenerator';
 import { PhysicsConfig, TimeOfDay, TelemetryData } from '../types/physics';
 import { soundEngine } from '../audio/soundEngine';
+import { modelManager, SpidermanInstance } from './modelManager';
 
 export interface SceneOptions {
   canvas: HTMLCanvasElement;
@@ -33,6 +34,9 @@ export class WebSwingScene {
 
   // Character hierarchy
   private characterGroup: THREE.Group;
+  private spidermanInstance?: SpidermanInstance;
+  private isGlbHero: boolean = false;
+  private proceduralHeroGroup?: THREE.Group;
   private torsoMesh!: THREE.Mesh;
   private headMesh!: THREE.Mesh;
   private visorMesh!: THREE.Mesh;
@@ -69,9 +73,33 @@ export class WebSwingScene {
   private netForceArrow: THREE.ArrowHelper;
   private trajectoryLine: THREE.Line;
 
+  // Smoothed bone target rotations for high-poly Spider-Man GLB model
+  private spidermanPose = {
+    torsoX: -0.04,
+    torsoY: 0,
+    torsoZ: 0,
+    headX: 0,
+    headY: 0,
+    armLX: 0.05,
+    armLZ: 0.05,
+    armRX: 0.05,
+    armRZ: -0.05,
+    legLX: 0.05,
+    legLZ: -0.05,
+    legRX: -0.05,
+    legRZ: 0.05,
+    rootY: -0.88,
+  };
+
   // Speed particles
   private speedParticles: THREE.Points;
   private speedParticleCount = 180;
+
+  // Ground Landing Shockwave
+  private landingShockwave?: THREE.Mesh;
+  private landingShockwaveTimer = 0;
+  private wasAirborne = false;
+  private prevVerticalSpeed = 0;
 
   // Lighting & Sky
   private dirLight!: THREE.DirectionalLight;
@@ -125,6 +153,11 @@ export class WebSwingScene {
     // Character
     this.characterGroup = this.createHeroCharacter();
     this.scene.add(this.characterGroup);
+
+    this.tryUpgradeToSpidermanGLB();
+    modelManager.onModelsLoaded(() => {
+      this.tryUpgradeToSpidermanGLB();
+    });
 
     // Web rope (high-tensile spun silk)
     const lineGeo = new THREE.BufferGeometry();
@@ -455,7 +488,11 @@ export class WebSwingScene {
     const chestGeo = new THREE.BoxGeometry(0.56, 0.9, 0.42);
     this.torsoMesh = new THREE.Mesh(chestGeo, redWebMat);
     this.torsoMesh.position.set(0, 0.42, 0);
-    root.add(this.torsoMesh);
+
+    this.proceduralHeroGroup = new THREE.Group();
+    this.proceduralHeroGroup.name = 'ProceduralHeroFallback';
+    this.proceduralHeroGroup.add(this.torsoMesh);
+    root.add(this.proceduralHeroGroup);
 
     // Blue athletic side flank panels (left & right)
     const sideGeo = new THREE.BoxGeometry(0.09, 0.84, 0.4);
@@ -661,6 +698,43 @@ export class WebSwingScene {
     return root;
   }
 
+  /**
+   * Upgrades the active character to the high-poly 3D Spider-Man GLB model
+   */
+  private tryUpgradeToSpidermanGLB() {
+    if (this.isGlbHero) return;
+    const inst = modelManager.createSpidermanInstance();
+    if (inst) {
+      if (this.proceduralHeroGroup) {
+        this.proceduralHeroGroup.visible = false;
+      }
+      this.spidermanInstance = inst;
+      this.characterGroup.add(inst.group);
+      inst.group.visible = true;
+      this.isGlbHero = true;
+    }
+  }
+
+  /**
+   * Applies bone rotation delta relative to bind pose
+   */
+  private applyBoneRot(
+    bone: THREE.Object3D | undefined,
+    keyOrName: string,
+    rotX: number,
+    rotY: number = 0,
+    rotZ: number = 0
+  ) {
+    if (!bone || !this.spidermanInstance) return;
+    const initial =
+      this.spidermanInstance.initialQuats.get(keyOrName) ||
+      this.spidermanInstance.initialQuats.get(bone.name);
+    if (!initial) return;
+    const delta = new THREE.Quaternion().setFromEuler(new THREE.Euler(rotX, rotY, rotZ, 'YXZ'));
+    // Local rotation multiplication relative to bind pose
+    bone.quaternion.copy(initial).multiply(delta);
+  }
+
   private createTargetReticle(): THREE.Group {
     const group = new THREE.Group();
     const ringGeo = new THREE.RingGeometry(0.7, 0.85, 32);
@@ -822,6 +896,26 @@ export class WebSwingScene {
     this.physics.releaseWeb();
   }
 
+  private triggerLandingShockwave(pos: THREE.Vector3) {
+    if (!this.landingShockwave) {
+      const geo = new THREE.RingGeometry(0.3, 0.6, 32);
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+      });
+      this.landingShockwave = new THREE.Mesh(geo, mat);
+      this.scene.add(this.landingShockwave);
+    }
+    this.landingShockwave.position.set(pos.x, pos.y + 0.05, pos.z);
+    this.landingShockwave.scale.set(1, 1, 1);
+    this.landingShockwave.visible = true;
+    (this.landingShockwave.material as THREE.MeshBasicMaterial).opacity = 0.85;
+    this.landingShockwaveTimer = 0.35;
+  }
+
   /**
    * Main simulation frame tick
    */
@@ -855,8 +949,33 @@ export class WebSwingScene {
     const currentSpeed = this.physics.velocity.length();
     soundEngine.updateWind(currentSpeed);
 
+    // Auto-upgrade to Spider-Man GLB model as soon as loaded
+    if (!this.isGlbHero && modelManager.isSpidermanLoaded) {
+      this.tryUpgradeToSpidermanGLB();
+    }
+
     // Character position sync
     this.characterGroup.position.copy(this.physics.position);
+
+    // Landing Impact Shockwave Detection
+    const isGroundedNow = this.physics.isOnGround || this.physics.isOnRoof;
+    if (this.wasAirborne && isGroundedNow && this.prevVerticalSpeed < -10.0) {
+      this.triggerLandingShockwave(this.physics.position);
+      soundEngine.playLanding();
+    }
+    this.wasAirborne = !isGroundedNow;
+    this.prevVerticalSpeed = this.physics.velocity.y;
+
+    if (this.landingShockwave && this.landingShockwaveTimer > 0) {
+      this.landingShockwaveTimer -= deltaTime;
+      const progress = 1 - this.landingShockwaveTimer / 0.35;
+      const ringScale = 1.0 + progress * 5.0;
+      this.landingShockwave.scale.set(ringScale, ringScale, 1);
+      (this.landingShockwave.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 0.85 * (1 - progress));
+      if (this.landingShockwaveTimer <= 0) {
+        this.landingShockwave.visible = false;
+      }
+    }
 
     // Procedural Character animation & Posing (locomotion, facing, banking, swinging)
     this.animateHeroPosing(deltaTime, input, forward, right);
@@ -937,6 +1056,22 @@ export class WebSwingScene {
     const isClimbing = this.physics.isClimbing;
     const isSprinting = Boolean(input.sprint || input.reelIn || (hasInput && horizSpeed > 14));
 
+    // Target bone rotations tailored specifically for the Spider-Man GLB model rig
+    let targetTorsoX = -0.04;
+    let targetTorsoY = 0;
+    let targetTorsoZ = 0;
+    let targetHeadX = 0;
+    let targetHeadY = 0;
+    let targetArmLX = 0.05;
+    let targetArmLZ = 0.05;
+    let targetArmRX = 0.05;
+    let targetArmRZ = -0.05;
+    let targetLegLX = 0.05;
+    let targetLegLZ = -0.05;
+    let targetLegRX = -0.05;
+    let targetLegRZ = 0.05;
+    let targetRootY = -0.88;
+
     if (isClimbing) {
       // -------------------------------------------------------------
       // STATE 0: WALL CLIMBING (Spider-Man's iconic wall-crawl pose)
@@ -954,27 +1089,38 @@ export class WebSwingScene {
       this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
       this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.3, 0.3);
 
-      // Spider-Man climb cycle — alternate arms/legs for crawling motion
       const climbCycle = Math.sin(performance.now() * 0.005) * (isSprinting ? 1.4 : 0.9);
       const climbCycleSlow = Math.sin(performance.now() * 0.004);
 
-      // Arms spread wide and forward, gripping the wall
+      // Spider-Man GLB model: arms reach forward and grip the wall
+      targetTorsoX = -0.45;
+      targetTorsoY = 0;
+      targetTorsoZ = 0;
+      targetHeadX = 0.55;
+      targetHeadY = 0;
+      targetArmLX = 0.95 + climbCycle * 0.25;
+      targetArmLZ = 0.35;
+      targetArmRX = 0.95 - climbCycle * 0.25;
+      targetArmRZ = -0.35;
+      targetLegLX = -0.45 - climbCycle * 0.30;
+      targetLegLZ = -0.30;
+      targetLegRX = -0.45 + climbCycle * 0.30;
+      targetLegRZ = 0.30;
+      targetRootY = -0.92;
+
+      // Fallback procedural hero posing
       this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, -1.1 + climbCycle * 0.3, 0.3);
       this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, -1.1 - climbCycle * 0.3, 0.3);
       this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.95, 0.3);
       this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.95, 0.3);
       this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.35 + climbCycle * 0.2, 0.3);
       this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.35 - climbCycle * 0.2, 0.3);
-
-      // Legs: spread wide and bent, clinging to wall
       this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, -0.65 + climbCycleSlow * 0.4, 0.3);
       this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.65 - climbCycleSlow * 0.4, 0.3);
       this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.55, 0.3);
       this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.55, 0.3);
       this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.80, 0.3);
       this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.80, 0.3);
-
-      // Head looking upward along climb direction
       this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.45, 0.3);
       this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
 
@@ -1004,43 +1150,52 @@ export class WebSwingScene {
       this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
       this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.25);
 
-      // Right arm raised toward anchor point in local space
+      // Spider-Man GLB: Right arm raised high towards web anchor, Left arm counter-balancing
+      targetTorsoX = -0.15 + swingPitch;
+      targetTorsoY = 0;
+      targetTorsoZ = bankAngle;
+      targetHeadX = -swingPitch * 0.6;
+      targetHeadY = -bankAngle * 0.4;
+      targetArmRX = 1.30; // Raised high forward and up to web
+      targetArmRZ = -0.85; // Raised upward
+      targetArmLX = -0.45; // Swept back in balance flourish
+      targetArmLZ = 0.65; // Extended outward
+      if (vel.y > 0) {
+        const upswing = Math.min(1.0, vel.y / 15.0);
+        targetLegLX = 0.65 * upswing; // Pendulum kick forward
+        targetLegLZ = -0.12;
+        targetLegRX = 0.40 * upswing;
+        targetLegRZ = 0.12;
+      } else {
+        targetLegLX = -0.45; // Streamlined behind during downswing
+        targetLegLZ = -0.06;
+        targetLegRX = -0.35;
+        targetLegRZ = 0.06;
+      }
+      targetRootY = -0.88;
+
+      // Fallback procedural hero posing
       const toAnchorWorld = new THREE.Vector3()
         .subVectors(this.physics.anchorPoint, this.physics.position)
         .normalize();
       const toAnchorLocal = toAnchorWorld
         .clone()
         .applyAxisAngle(new THREE.Vector3(0, 1, 0), -this.characterGroup.rotation.y);
-
       const armElev = Math.atan2(-toAnchorLocal.y, Math.hypot(toAnchorLocal.x, toAnchorLocal.z));
       const armYaw = Math.atan2(toAnchorLocal.x, toAnchorLocal.z);
-
-      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(
-        this.rightArmGroup.rotation.x,
-        armElev - Math.PI * 0.5,
-        0.28
-      );
+      this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, armElev - Math.PI * 0.5, 0.28);
       this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, armYaw * 0.5, 0.28);
-      // Elbow bent holding the tense web strand
       this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.55, 0.25);
-
-      // Left arm trailing back for dynamic acrobat balance
       this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.85, 0.22);
       this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.65, 0.22);
       this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.65, 0.22);
-
-      // Dynamic Leg Pumping & Flow during Swing
       if (vel.y > 0) {
-        // Upswing: Peter pumps his legs forward and upward to convert kinetic energy
         const upswing = Math.min(1.0, Math.max(0, vel.y / 15.0));
-        const leftThigh = THREE.MathUtils.lerp(0.65, -0.35, upswing);
-        const rightThigh = THREE.MathUtils.lerp(0.85, 0.08, upswing);
-        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, leftThigh, 0.25);
-        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, rightThigh, 0.25);
+        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, THREE.MathUtils.lerp(0.65, -0.35, upswing), 0.25);
+        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, THREE.MathUtils.lerp(0.85, 0.08, upswing), 0.25);
         this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.55, 0.25);
         this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.35, 0.25);
       } else {
-        // Downswing / acceleration pocket: legs stream back gracefully
         this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.70, 0.22);
         this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, 0.85, 0.22);
         this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.75, 0.22);
@@ -1048,13 +1203,12 @@ export class WebSwingScene {
       }
       this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.12, 0.2);
       this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.12, 0.2);
-
-      // Head tracks forward along trajectory
       this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, -swingPitch * 0.7, 0.25);
       this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, -bankAngle * 0.45, 0.25);
+
     } else if (!isGrounded) {
       // -------------------------------------------------------------
-      // STATE 2: JATUH SETELAH BERAYUN / AIRBORNE VAULT / SUPERHERO DIVE
+      // STATE 2: JATUH DARI KETINGGIAN / AIRBORNE SOMERSAULT / SKY DIVE
       // -------------------------------------------------------------
       // Align facing with movement input or horizontal velocity
       if (hasInput) {
@@ -1065,204 +1219,280 @@ export class WebSwingScene {
         this.rotateCharacterFacing(targetYaw, 10.0 * dt);
       }
 
-      if (vel.y > 2.5) {
+      if (vel.y > 2.0) {
         // 2A. Catapult Vault / Acrobatic Somersault Launch (Immediately after swing release)
-        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.35, 0.22);
-        this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
-        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
-        this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
+        targetTorsoX = -0.30;
+        targetTorsoY = 0;
+        targetTorsoZ = 0;
+        targetHeadX = 0.20;
+        targetHeadY = 0;
+        targetLegLX = 0.65; // Knees tucked high
+        targetLegLZ = -0.10;
+        targetLegRX = 0.50;
+        targetLegRZ = 0.10;
+        targetArmLX = 0.35; // Arms open in acrobatic stabilization
+        targetArmLZ = 0.55;
+        targetArmRX = 0.35;
+        targetArmRZ = -0.55;
+        targetRootY = -0.85;
 
-        // Knees tucked high in acrobatic aerial somersault
+        // Fallback procedural
+        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.35, 0.22);
         this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.75, 0.25);
         this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, 0.40, 0.25);
         this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 1.25, 0.25);
         this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.95, 0.25);
-        this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.15, 0.2);
-        this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.15, 0.2);
-
-        // Arms spread wide for acrobatic stabilization
         this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, -0.65, 0.25);
         this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, -0.65, 0.25);
-        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.80, 0.25);
-        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.80, 0.25);
-        this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.50, 0.25);
-        this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.50, 0.25);
+      } else if (vel.y < -3.5) {
+        // 2B. High-Speed Descent Superhero Dive ("Jatuh Dari Ketinggian")
+        const divePitch = Math.min(1.2, -vel.y * 0.04);
+        targetTorsoX = -divePitch; // Steep forward dive lean
+        targetTorsoY = 0;
+        targetTorsoZ = 0;
+        targetHeadX = 0.55; // Head raised looking forward at city street below
+        targetHeadY = 0;
+        // Arms swept back along the flanks like aerodynamic wings
+        targetArmLX = -0.75;
+        targetArmLZ = 0.10;
+        targetArmRX = -0.75;
+        targetArmRZ = -0.10;
+        targetLegLX = -0.40;
+        targetLegLZ = -0.05;
+        targetLegRX = -0.30;
+        targetLegRZ = 0.05;
+        targetRootY = -0.88;
 
-        this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.25, 0.25);
-        this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
-      } else if (vel.y >= -3.5) {
-        // 2B. Weightless Apex Float & Target Ready Pose
-        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.15, 0.2);
-        this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
-        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
-        this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
-
-        // One leg tucked, one trailing
-        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.35, 0.22);
-        this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.95, 0.22);
-        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.20, 0.22);
-        this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.35, 0.22);
-        this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.10, 0.2);
-        this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.10, 0.2);
-
-        // Right arm extended forward targeting next building
-        this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, -0.90, 0.22);
-        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.25, 0.22);
-        this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.35, 0.22);
-
-        // Left arm swept back in stylish counterbalance
-        this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.75, 0.22);
-        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.60, 0.22);
-        this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.45, 0.22);
-
-        this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.15, 0.22);
-        this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
-      } else {
-        // 2C. High-Speed Descent Superhero Dive ("Jatuh Setelah Berayun")
-        const divePitch = Math.min(Math.PI * 0.45, -vel.y * 0.038);
+        // Fallback procedural
         this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, divePitch, 0.25);
-        this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
-        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
-        this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
-
-        // Arms swept back along the flanks like wings
         this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 1.25, 0.25);
         this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, 1.25, 0.25);
-        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.28, 0.25);
-        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.28, 0.25);
-        this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.45, 0.25);
-        this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.45, 0.25);
+      } else {
+        // 2C. Weightless Apex Float & Target Ready Pose
+        targetTorsoX = -0.10;
+        targetTorsoY = 0;
+        targetTorsoZ = 0;
+        targetHeadX = 0.10;
+        targetHeadY = 0;
+        targetArmRX = 0.75; // Right arm targeting forward
+        targetArmRZ = -0.25;
+        targetArmLX = -0.45; // Left arm swept back
+        targetArmLZ = 0.45;
+        targetLegLX = 0.45;
+        targetLegLZ = -0.08;
+        targetLegRX = -0.25;
+        targetLegRZ = 0.08;
+        targetRootY = -0.88;
 
-        // Legs streamlined behind with gentle knee flexion
-        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.40, 0.25);
-        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, 0.55, 0.25);
-        this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.35, 0.25);
-        this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.25, 0.25);
-        this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.08, 0.2);
-        this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.08, 0.2);
-
-        // Head raised looking forward towards ground/city below
-        this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, -divePitch * 0.85, 0.25);
-        this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
+        // Fallback procedural
+        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.15, 0.2);
+        this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.35, 0.22);
+        this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.20, 0.22);
       }
     } else {
       // -------------------------------------------------------------
       // STATE 3: GROUND & ROOFTOP LOCOMOTION (WALKING vs SUPERHERO SPRINTING vs IDLE)
       // -------------------------------------------------------------
       let turnDiff = 0;
+      let bankLean = 0;
       if (hasInput) {
         const targetYaw = Math.atan2(moveInput.x, moveInput.z);
-        // Snappy, realistic turning rate
         turnDiff = this.rotateCharacterFacing(targetYaw, 18.0 * dt);
-
-        // Dynamic banking / leaning into sharp turns while running
-        const bankLean = THREE.MathUtils.clamp(-turnDiff * 0.45, -0.35, 0.35);
+        bankLean = THREE.MathUtils.clamp(-turnDiff * 0.45, -0.35, 0.35);
         this.torsoMesh.rotation.z = THREE.MathUtils.lerp(
           this.torsoMesh.rotation.z,
           isSprinting ? bankLean * 1.3 : bankLean,
           0.28
         );
       } else if (horizSpeed > 0.6) {
-        // Coasting / sliding on ground: face velocity direction
         const targetYaw = Math.atan2(vel.x, vel.z);
         turnDiff = this.rotateCharacterFacing(targetYaw, 12.0 * dt);
         this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
       } else {
-        // Standing still: straighten torso
         this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
       }
 
       const isMoving = hasInput || horizSpeed > 0.8;
 
-      if (isMoving) {
+      if (this.landingShockwaveTimer > 0) {
+        // 3A. 3-Point Superhero Landing Crouch on high-impact landing
+        targetTorsoX = -0.48;
+        targetTorsoY = 0.12;
+        targetTorsoZ = 0;
+        targetHeadX = 0.45;
+        targetHeadY = 0;
+        targetArmRX = 0.70; // Right fist on pavement
+        targetArmRZ = -0.15;
+        targetArmLX = -0.60; // Left arm back for balance
+        targetArmLZ = 0.55;
+        targetLegLX = 0.45; // Dynamic landing crouch legs
+        targetLegLZ = -0.35;
+        targetLegRX = -0.55;
+        targetLegRZ = 0.25;
+        targetRootY = -1.15;
+
+        // Fallback procedural
+        this.torsoMesh.position.y = 0.22;
+        this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.55, 0.35);
+        this.rightArmGroup.rotation.x = -1.15;
+        this.leftArmGroup.rotation.x = 0.85;
+
+      } else if (isMoving) {
         if (isSprinting) {
-          // 3A. SUPERHERO SPRINT (Fast, fluid, low-profile athletic run)
+          // 3B. SUPERHERO SPRINT (Fast, fluid, low-profile athletic run)
           const cadence = Math.min(24, Math.max(16, horizSpeed * 1.15));
           this.runCycleTime += dt * cadence;
           const stride = Math.sin(this.runCycleTime);
 
-          // Deep forward attack lean & shoulder counter-twist
+          // Spider-Man GLB model targets
+          targetTorsoX = -0.30; // Athletic forward lean
+          targetTorsoY = stride * 0.12; // Natural chest counter-twist
+          targetTorsoZ = bankLean; // Bank into turns
+          targetHeadX = 0.22;
+          targetHeadY = -stride * 0.04;
+          targetLegLX = stride * 0.85; // High-knee drive
+          targetLegLZ = -0.06;
+          targetLegRX = -stride * 0.85;
+          targetLegRZ = 0.06;
+          // Power arm pumping (opposite to legs: left arm forward when left leg is back!)
+          targetArmLX = -stride * 0.85;
+          targetArmLZ = 0.20; // Natural outward elbow flare
+          targetArmRX = stride * 0.85;
+          targetArmRZ = -0.20;
+          targetRootY = -0.88 + Math.abs(Math.sin(this.runCycleTime * 2)) * 0.06;
+
+          // Fallback procedural
           this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.35, 0.28);
           this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, stride * 0.16, 0.3);
-          this.torsoMesh.position.y = 0.40 + Math.abs(Math.sin(this.runCycleTime * 2)) * 0.05;
-
-          // High-Knee Sprint Drive & Deep Dynamic Knee Flexion
           this.leftLegGroup.rotation.x = stride * 1.05;
           this.rightLegGroup.rotation.x = -stride * 1.05;
-          this.leftLegGroup.rotation.z = -0.06;
-          this.rightLegGroup.rotation.z = 0.06;
-
-          // When kicking back, knee bends sharply (up to ~85°); when reaching forward, leg extends
-          this.leftCalfGroup.rotation.x = Math.max(0.12, stride * 1.45);
-          this.rightCalfGroup.rotation.x = Math.max(0.12, -stride * 1.45);
-
-          // Vigorous Power Arm Pumping with ~80° Bent Elbows
           this.leftArmGroup.rotation.x = -stride * 1.05;
           this.rightArmGroup.rotation.x = stride * 1.05;
-          this.leftArmGroup.rotation.z = -0.32;
-          this.rightArmGroup.rotation.z = 0.32;
-          this.leftForearmGroup.rotation.x = -(1.35 + stride * 0.25);
-          this.rightForearmGroup.rotation.x = -(1.35 - stride * 0.25);
 
-          // Head focused forward
-          this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.28, 0.25);
-          this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, -stride * 0.05, 0.25);
         } else {
-          // 3B. NATURAL FLUID WALKING (Moderate cadence, soft knees, relaxed arm swing)
+          // 3C. NATURAL FLUID WALKING (Moderate cadence, relaxed arm swing)
           const cadence = Math.min(13, Math.max(8.5, horizSpeed * 1.0));
           this.runCycleTime += dt * cadence;
           const stride = Math.sin(this.runCycleTime);
 
-          // Gentle torso lean and natural counter-twist
-          this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.14, 0.22);
-          this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, stride * 0.08, 0.25);
-          this.torsoMesh.position.y = 0.42 + Math.abs(Math.sin(this.runCycleTime * 2)) * 0.025;
+          targetTorsoX = -0.08;
+          targetTorsoY = stride * 0.06;
+          targetTorsoZ = 0;
+          targetHeadX = 0.08;
+          targetHeadY = -stride * 0.03;
+          targetLegLX = stride * 0.45;
+          targetLegLZ = -0.04;
+          targetLegRX = -stride * 0.45;
+          targetLegRZ = 0.04;
+          targetArmLX = -stride * 0.40;
+          targetArmLZ = 0.08;
+          targetArmRX = stride * 0.40;
+          targetArmRZ = -0.08;
+          targetRootY = -0.88 + Math.abs(Math.sin(this.runCycleTime * 2)) * 0.025;
 
-          // Leg Stride & Natural Knee Flexion on push-off
+          // Fallback procedural
+          this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.14, 0.22);
           this.leftLegGroup.rotation.x = stride * 0.55;
           this.rightLegGroup.rotation.x = -stride * 0.55;
-          this.leftLegGroup.rotation.z = -0.05;
-          this.rightLegGroup.rotation.z = 0.05;
-
-          this.leftCalfGroup.rotation.x = Math.max(0.08, stride * 0.80);
-          this.rightCalfGroup.rotation.x = Math.max(0.08, -stride * 0.80);
-
-          // Relaxed Arm Swing with gentle elbow flexion
           this.leftArmGroup.rotation.x = -stride * 0.45;
           this.rightArmGroup.rotation.x = stride * 0.45;
-          this.leftArmGroup.rotation.z = -0.22;
-          this.rightArmGroup.rotation.z = 0.22;
-          this.leftForearmGroup.rotation.x = -(0.35 + Math.max(0, -stride) * 0.25);
-          this.rightForearmGroup.rotation.x = -(0.35 + Math.max(0, stride) * 0.25);
-
-          this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.10, 0.2);
-          this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, -stride * 0.04, 0.2);
         }
       } else {
-        // 3C. IDLE SPIDER-MAN READY CROUCH
+        // 3D. IDLE SPIDER-MAN READY STANCE (Hands relaxed at sides, not behind back!)
+        targetTorsoX = -0.04;
+        targetTorsoY = 0;
+        targetTorsoZ = 0;
+        targetHeadX = 0;
+        targetHeadY = 0;
+        targetArmLX = 0.05; // Resting naturally at hip
+        targetArmLZ = 0.05;
+        targetArmRX = 0.05; // Resting naturally at hip
+        targetArmRZ = -0.05;
+        targetLegLX = 0.05; // Natural stance
+        targetLegLZ = -0.05;
+        targetLegRX = -0.05;
+        targetLegRZ = 0.05;
+        targetRootY = -0.88;
+
+        // Fallback procedural
         this.torsoMesh.position.y = THREE.MathUtils.lerp(this.torsoMesh.position.y, 0.42, 0.2);
         this.torsoMesh.rotation.x = THREE.MathUtils.lerp(this.torsoMesh.rotation.x, -0.12, 0.2);
-        this.torsoMesh.rotation.y = THREE.MathUtils.lerp(this.torsoMesh.rotation.y, 0, 0.2);
-        this.torsoMesh.rotation.z = THREE.MathUtils.lerp(this.torsoMesh.rotation.z, 0, 0.2);
-
-        // Relaxed stance with soft knees
         this.leftLegGroup.rotation.x = THREE.MathUtils.lerp(this.leftLegGroup.rotation.x, 0.12, 0.2);
         this.rightLegGroup.rotation.x = THREE.MathUtils.lerp(this.rightLegGroup.rotation.x, -0.08, 0.2);
-        this.leftLegGroup.rotation.z = THREE.MathUtils.lerp(this.leftLegGroup.rotation.z, -0.08, 0.2);
-        this.rightLegGroup.rotation.z = THREE.MathUtils.lerp(this.rightLegGroup.rotation.z, 0.08, 0.2);
-        this.leftCalfGroup.rotation.x = THREE.MathUtils.lerp(this.leftCalfGroup.rotation.x, 0.14, 0.2);
-        this.rightCalfGroup.rotation.x = THREE.MathUtils.lerp(this.rightCalfGroup.rotation.x, 0.16, 0.2);
-
-        // Relaxed arms at sides with gentle elbow bend
         this.leftArmGroup.rotation.x = THREE.MathUtils.lerp(this.leftArmGroup.rotation.x, 0.12, 0.2);
         this.rightArmGroup.rotation.x = THREE.MathUtils.lerp(this.rightArmGroup.rotation.x, 0.12, 0.2);
-        this.leftArmGroup.rotation.z = THREE.MathUtils.lerp(this.leftArmGroup.rotation.z, -0.22, 0.2);
-        this.rightArmGroup.rotation.z = THREE.MathUtils.lerp(this.rightArmGroup.rotation.z, 0.22, 0.2);
-        this.leftForearmGroup.rotation.x = THREE.MathUtils.lerp(this.leftForearmGroup.rotation.x, -0.25, 0.2);
-        this.rightForearmGroup.rotation.x = THREE.MathUtils.lerp(this.rightForearmGroup.rotation.x, -0.25, 0.2);
+      }
+    }
 
-        this.headMesh.rotation.x = THREE.MathUtils.lerp(this.headMesh.rotation.x, 0.10, 0.2);
-        this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, 0.2);
+    // Smoothly interpolate all Spider-Man GLB targets
+    const lerpRate = Math.min(1.0, 16.0 * dt);
+    this.spidermanPose.torsoX = THREE.MathUtils.lerp(this.spidermanPose.torsoX, targetTorsoX, lerpRate);
+    this.spidermanPose.torsoY = THREE.MathUtils.lerp(this.spidermanPose.torsoY, targetTorsoY, lerpRate);
+    this.spidermanPose.torsoZ = THREE.MathUtils.lerp(this.spidermanPose.torsoZ, targetTorsoZ, lerpRate);
+    this.spidermanPose.headX = THREE.MathUtils.lerp(this.spidermanPose.headX, targetHeadX, lerpRate);
+    this.spidermanPose.headY = THREE.MathUtils.lerp(this.spidermanPose.headY, targetHeadY, lerpRate);
+    this.spidermanPose.armLX = THREE.MathUtils.lerp(this.spidermanPose.armLX, targetArmLX, lerpRate);
+    this.spidermanPose.armLZ = THREE.MathUtils.lerp(this.spidermanPose.armLZ, targetArmLZ, lerpRate);
+    this.spidermanPose.armRX = THREE.MathUtils.lerp(this.spidermanPose.armRX, targetArmRX, lerpRate);
+    this.spidermanPose.armRZ = THREE.MathUtils.lerp(this.spidermanPose.armRZ, targetArmRZ, lerpRate);
+    this.spidermanPose.legLX = THREE.MathUtils.lerp(this.spidermanPose.legLX, targetLegLX, lerpRate);
+    this.spidermanPose.legLZ = THREE.MathUtils.lerp(this.spidermanPose.legLZ, targetLegLZ, lerpRate);
+    this.spidermanPose.legRX = THREE.MathUtils.lerp(this.spidermanPose.legRX, targetLegRX, lerpRate);
+    this.spidermanPose.legRZ = THREE.MathUtils.lerp(this.spidermanPose.legRZ, targetLegRZ, lerpRate);
+    this.spidermanPose.rootY = THREE.MathUtils.lerp(this.spidermanPose.rootY, targetRootY, lerpRate);
+
+    // Synchronize rigged skeleton bones on high-poly GLB Spider-Man model
+    if (this.isGlbHero && this.spidermanInstance) {
+      const inst = this.spidermanInstance;
+      this.applyBoneRot(
+        inst.torsoBone,
+        'torso',
+        this.spidermanPose.torsoX,
+        this.spidermanPose.torsoY,
+        this.spidermanPose.torsoZ
+      );
+      this.applyBoneRot(
+        inst.headBone,
+        'head',
+        this.spidermanPose.headX,
+        this.spidermanPose.headY,
+        0
+      );
+
+      // ArmL_1 and ArmR_3 are the actual arm bones that skin the mesh
+      this.applyBoneRot(
+        inst.armL,
+        'armL',
+        this.spidermanPose.armLX,
+        0,
+        this.spidermanPose.armLZ
+      );
+      this.applyBoneRot(
+        inst.armR,
+        'armR',
+        this.spidermanPose.armRX,
+        0,
+        this.spidermanPose.armRZ
+      );
+
+      // LegL_6 and LegR_7 skin the legs
+      this.applyBoneRot(
+        inst.legL,
+        'legL',
+        this.spidermanPose.legLX,
+        0,
+        this.spidermanPose.legLZ
+      );
+      this.applyBoneRot(
+        inst.legR,
+        'legR',
+        this.spidermanPose.legRX,
+        0,
+        this.spidermanPose.legRZ
+      );
+
+      if (inst.rootBone) {
+        inst.rootBone.position.y = this.spidermanPose.rootY;
       }
     }
   }
@@ -1353,7 +1583,10 @@ export class WebSwingScene {
 
       // Hero shooter hand position from actual right wrist web-shooter nozzle in 3D world space
       const handPos = new THREE.Vector3();
-      if (this.rightNozzleMesh) {
+      if (this.isGlbHero && this.spidermanInstance?.armR) {
+        this.spidermanInstance.armR.getWorldPosition(handPos);
+        handPos.y -= 0.12;
+      } else if (this.rightNozzleMesh) {
         this.rightNozzleMesh.getWorldPosition(handPos);
       } else {
         this.rightArmGroup.getWorldPosition(handPos);
