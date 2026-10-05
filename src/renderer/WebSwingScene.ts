@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SwingPhysics, PlayerInput } from '../physics/swingPhysics';
 import { CityEnvironment, generateCity } from '../city/cityGenerator';
-import { PhysicsConfig, TimeOfDay, TelemetryData } from '../types/physics';
+import { PhysicsConfig, TimeOfDay, TelemetryData, GraphicsQualityPreset, GPUInfo, GraphicsSettings } from '../types/physics';
 import { soundEngine } from '../audio/soundEngine';
 import { modelManager, SpidermanInstance } from './modelManager';
 
@@ -18,6 +18,13 @@ export interface SceneOptions {
 export class WebSwingScene {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
+
+  // Graphics & Performance settings
+  private gpuInfo: GPUInfo = { vendor: 'Generic', renderer: 'WebGL', isDedicated: false };
+  private currentGraphicsPreset: GraphicsQualityPreset = 'balanced';
+  private currentRenderScale: number = 1.0;
+  private shadowsEnabled: boolean = true;
+  private currentDrawDistance: number = 900;
   private camera: THREE.PerspectiveCamera;
   private physics: SwingPhysics;
   private city: CityEnvironment;
@@ -138,18 +145,37 @@ export class WebSwingScene {
     const aspect = window.innerWidth / window.innerHeight;
     this.camera = new THREE.PerspectiveCamera(this.baseFOV, aspect, 0.1, 1200);
 
-    // Renderer
+    // Renderer with explicit high-performance preference
     this.renderer = new THREE.WebGLRenderer({
       canvas: options.canvas,
       antialias: true,
       powerPreference: 'high-performance',
       stencil: false,
+      precision: 'highp',
     });
+
+    // Query active GPU hardware
+    this.gpuInfo = this.detectGPU();
+
+    // If running on integrated GPU (Intel UHD / Iris Xe / AMD Radeon),
+    // default to performance-focused preset (pixel ratio 1.0, shadows off) to ensure smooth 60 FPS!
+    if (!this.gpuInfo.isDedicated) {
+      this.currentGraphicsPreset = 'low';
+      this.currentRenderScale = 1.0;
+      this.shadowsEnabled = false;
+      this.currentDrawDistance = 750;
+    } else {
+      this.currentGraphicsPreset = 'high';
+      this.currentRenderScale = 1.25;
+      this.shadowsEnabled = true;
+      this.currentDrawDistance = 1000;
+    }
+
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.currentRenderScale));
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.shadowsEnabled;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     // Environment & City
@@ -254,9 +280,10 @@ export class WebSwingScene {
       this.dirLight.position.set(80, 140, 80);
     }
 
-    this.dirLight.castShadow = true;
-    this.dirLight.shadow.mapSize.width = 1024;
-    this.dirLight.shadow.mapSize.height = 1024;
+    this.dirLight.castShadow = this.shadowsEnabled;
+    const shadowMapSize = this.currentGraphicsPreset === 'low' ? 512 : this.currentGraphicsPreset === 'balanced' ? 512 : 1024;
+    this.dirLight.shadow.mapSize.width = shadowMapSize;
+    this.dirLight.shadow.mapSize.height = shadowMapSize;
     this.dirLight.shadow.camera.near = 10;
     this.dirLight.shadow.camera.far = 400;
     const d = 160;
@@ -1685,16 +1712,44 @@ export class WebSwingScene {
 
       // Hero shooter hand position from actual right wrist web-shooter nozzle in 3D world space
       const handPos = new THREE.Vector3();
+      const charY = this.characterGroup.rotation.y;
+      const charRight = new THREE.Vector3(Math.cos(charY), 0, -Math.sin(charY));
+      const charForward = new THREE.Vector3(-Math.sin(charY), 0, -Math.cos(charY));
+      const charUp = new THREE.Vector3(0, 1, 0);
+
+      // In world space, right shoulder pivot is located at +0.32 right, +0.45 up (shoulder height), +0.10 forward
+      const shoulderPos = this.physics.position.clone()
+        .addScaledVector(charRight, 0.32)
+        .addScaledVector(charUp, 0.45)
+        .addScaledVector(charForward, 0.10);
+
+      // Direction vector pointing from shoulder directly toward the web anchor
+      const toAnchor = new THREE.Vector3()
+        .subVectors(this.physics.anchorPoint, shoulderPos)
+        .normalize();
+
+      // Right arm extends ~0.65m towards the anchor point during swing
+      const calculatedWristPos = shoulderPos.clone().addScaledVector(toAnchor, 0.65);
+
       if (this.isGlbHero && this.spidermanInstance?.handR) {
-        this.spidermanInstance.handR.getWorldPosition(handPos);
-      } else if (this.isGlbHero && this.spidermanInstance?.armR) {
-        handPos.set(2.85, 3.35, 0.25);
-        this.spidermanInstance.armR.localToWorld(handPos);
+        const glbHandPos = new THREE.Vector3();
+        this.spidermanInstance.handR.getWorldPosition(glbHandPos);
+        // Ensure web never originates from waist / hip level
+        if (glbHandPos.y >= shoulderPos.y - 0.2) {
+          handPos.copy(glbHandPos);
+        } else {
+          handPos.copy(calculatedWristPos);
+        }
       } else if (this.rightNozzleMesh) {
-        this.rightNozzleMesh.getWorldPosition(handPos);
+        const procPos = new THREE.Vector3();
+        this.rightNozzleMesh.getWorldPosition(procPos);
+        if (procPos.y >= shoulderPos.y - 0.2) {
+          handPos.copy(procPos);
+        } else {
+          handPos.copy(calculatedWristPos);
+        }
       } else {
-        this.rightArmGroup.getWorldPosition(handPos);
-        handPos.y -= 0.66;
+        handPos.copy(calculatedWristPos);
       }
       const anchorPos = this.physics.anchorPoint;
 
@@ -1823,13 +1878,103 @@ export class WebSwingScene {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * Queries WebGL unmasked vendor and renderer to detect dedicated vs integrated GPU
+   */
+  private detectGPU(): GPUInfo {
+    try {
+      const gl = this.renderer.getContext();
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+      if (debugInfo) {
+        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || 'Unknown';
+        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || 'WebGL';
+        const isDedicated = /nvidia|geforce|rtx|gtx|radeon\s*rx|quadro|discrete|dedicated/i.test(renderer);
+        return { vendor, renderer, isDedicated };
+      }
+    } catch (e) {
+      console.warn('Could not query unmasked GPU:', e);
+    }
+    return { vendor: 'WebGL Standard', renderer: 'Generic Hardware', isDedicated: false };
+  }
+
+  public getGPUInfo(): GPUInfo {
+    return this.gpuInfo;
+  }
+
+  public getGraphicsSettings(): GraphicsSettings {
+    return {
+      preset: this.currentGraphicsPreset,
+      renderScale: this.currentRenderScale,
+      shadows: this.shadowsEnabled,
+      drawDistance: this.currentDrawDistance,
+    };
+  }
+
+  public setShadowsEnabled(enabled: boolean) {
+    this.shadowsEnabled = enabled;
+    this.renderer.shadowMap.enabled = enabled;
+    if (this.dirLight) {
+      this.dirLight.castShadow = enabled;
+    }
+  }
+
+  public setRenderScale(scale: number) {
+    this.currentRenderScale = scale;
+    const pixelRatio = Math.min(window.devicePixelRatio, scale);
+    this.renderer.setPixelRatio(pixelRatio);
+  }
+
+  public setDrawDistance(dist: number) {
+    this.currentDrawDistance = dist;
+    this.camera.far = dist;
+    this.camera.updateProjectionMatrix();
+    if (this.scene.fog instanceof THREE.FogExp2) {
+      this.scene.fog.density = 2.8 / dist;
+    }
+  }
+
+  public setGraphicsPreset(preset: GraphicsQualityPreset) {
+    this.currentGraphicsPreset = preset;
+    switch (preset) {
+      case 'low': // Best for Integrated GPU: 60+ FPS focus
+        this.setRenderScale(1.0);
+        this.setShadowsEnabled(false);
+        this.setDrawDistance(650);
+        break;
+      case 'balanced':
+        this.setRenderScale(1.0);
+        this.setShadowsEnabled(true);
+        if (this.dirLight) {
+          this.dirLight.shadow.mapSize.set(512, 512);
+        }
+        this.setDrawDistance(850);
+        break;
+      case 'high':
+        this.setRenderScale(1.25);
+        this.setShadowsEnabled(true);
+        if (this.dirLight) {
+          this.dirLight.shadow.mapSize.set(1024, 1024);
+        }
+        this.setDrawDistance(1000);
+        break;
+      case 'ultra':
+        this.setRenderScale(Math.min(window.devicePixelRatio, 1.75));
+        this.setShadowsEnabled(true);
+        if (this.dirLight) {
+          this.dirLight.shadow.mapSize.set(2048, 2048);
+        }
+        this.setDrawDistance(1200);
+        break;
+    }
+  }
+
   public handleResize() {
     const width = window.innerWidth;
     const height = window.innerHeight;
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, this.currentRenderScale));
   }
 
   public destroy() {

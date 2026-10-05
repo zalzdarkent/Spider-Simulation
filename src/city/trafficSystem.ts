@@ -34,7 +34,7 @@ export interface Vehicle {
   minBound: number;
   maxBound: number;
   isGlb?: boolean;
-  vehicleType?: 'taxi' | 'police' | 'sedan' | 'van';
+  vehicleType?: 'taxi' | 'police' | 'sedan' | 'van' | 'bus';
   // Intersection navigation & turn state
   plannedTurn: TurnDirection;
   turnState?: TurnState;
@@ -362,7 +362,7 @@ export class TrafficSystem {
 
   private upgradeToGLB() {
     this.vehicles.forEach((v) => {
-      if (v.isGlb) return;
+      if (v.isGlb || v.vehicleType === 'bus') return;
       const type = v.vehicleType || (v.isPolice ? 'police' : 'sedan');
       const glb = modelManager.createCarInstance(type);
       if (glb) {
@@ -466,19 +466,21 @@ export class TrafficSystem {
       return wheels;
     };
 
-    const createVehicleMesh = (type: 'taxi' | 'police' | 'sedan' | 'van') => {
-      const glbCar = modelManager.createCarInstance(type);
-      if (glbCar) {
-        return {
-          carGroup: glbCar.group,
-          wheels: [] as THREE.Mesh[],
-          isPolice: glbCar.isPolice,
-          policeBeacons: glbCar.policeBeacons,
-          taillights: glbCar.taillights,
-          leftBlinkers: glbCar.leftBlinkers,
-          rightBlinkers: glbCar.rightBlinkers,
-          isGlb: true,
-        };
+    const createVehicleMesh = (type: 'taxi' | 'police' | 'sedan' | 'van' | 'bus') => {
+      if (type !== 'bus') {
+        const glbCar = modelManager.createCarInstance(type);
+        if (glbCar) {
+          return {
+            carGroup: glbCar.group,
+            wheels: [] as THREE.Mesh[],
+            isPolice: glbCar.isPolice,
+            policeBeacons: glbCar.policeBeacons,
+            taillights: glbCar.taillights,
+            leftBlinkers: glbCar.leftBlinkers,
+            rightBlinkers: glbCar.rightBlinkers,
+            isGlb: true,
+          };
+        }
       }
 
       const carGroup = new THREE.Group();
@@ -490,7 +492,90 @@ export class TrafficSystem {
 
       const isPolice = type === 'police';
 
-      if (type === 'van') {
+      if (type === 'bus') {
+        // High-Capacity City Transit Bus (10.8m long, modern low-floor transit bus)
+        const busLength = 10.8;
+        const busWidth = 2.8;
+        const busHeight = 3.2;
+
+        const busBodyMat = new THREE.MeshStandardMaterial({
+          color: 0x0284c7, // Vibrant Transit Blue
+          roughness: 0.35,
+          metalness: 0.25,
+        });
+
+        const busRoofMat = new THREE.MeshStandardMaterial({
+          color: 0xf8fafc, // Crisp White Roof
+          roughness: 0.4,
+          metalness: 0.2,
+        });
+
+        // Main Lower & Mid Chassis
+        const lowerGeo = new THREE.BoxGeometry(busWidth, busHeight * 0.4, busLength);
+        const lowerBody = new THREE.Mesh(lowerGeo, busBodyMat);
+        lowerBody.position.y = 0.9;
+        lowerBody.castShadow = true;
+        carGroup.add(lowerBody);
+
+        // Continuous Panoramic Passenger Windows
+        const winGeo = new THREE.BoxGeometry(busWidth * 0.96, busHeight * 0.35, busLength * 0.88);
+        const winMesh = new THREE.Mesh(winGeo, windowGlassMat);
+        winMesh.position.y = 2.05;
+        carGroup.add(winMesh);
+
+        // Roof Cap with AC and ventilation pods
+        const roofGeo = new THREE.BoxGeometry(busWidth, 0.45, busLength);
+        const roof = new THREE.Mesh(roofGeo, busRoofMat);
+        roof.position.y = 2.85;
+        roof.castShadow = true;
+        carGroup.add(roof);
+
+        // Rooftop AC units
+        for (const rz of [-2.4, 1.8]) {
+          const acGeo = new THREE.BoxGeometry(1.8, 0.32, 2.2);
+          const ac = new THREE.Mesh(acGeo, busBodyMat);
+          ac.position.set(0, 3.2, rz);
+          carGroup.add(ac);
+        }
+
+        // Amber LED Digital Destination Display above front windshield
+        const ledCanvas = document.createElement('canvas');
+        ledCanvas.width = 256;
+        ledCanvas.height = 64;
+        const lCtx = ledCanvas.getContext('2d')!;
+        lCtx.fillStyle = '#0a0a0a';
+        lCtx.fillRect(0, 0, 256, 64);
+        lCtx.fillStyle = '#fbbf24';
+        lCtx.font = 'bold 22px monospace';
+        lCtx.textAlign = 'center';
+        lCtx.textBaseline = 'middle';
+        lCtx.fillText('42 DOWNTOWN EXP', 128, 32);
+
+        const ledTex = new THREE.CanvasTexture(ledCanvas);
+        const ledMat = new THREE.MeshBasicMaterial({ map: ledTex, toneMapped: false });
+        const ledSign = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.48), ledMat);
+        ledSign.position.set(0, 2.65, busLength / 2 + 0.03);
+        carGroup.add(ledSign);
+
+        // 6 Large Transit Wheels (Front steer pair + Dual rear drive axles)
+        const wheelGeo = new THREE.CylinderGeometry(0.48, 0.48, 0.32, 16);
+        wheelGeo.rotateZ(Math.PI / 2);
+        const wheelPositions = [
+          { x: -busWidth / 2 - 0.05, z: 3.4 },
+          { x: busWidth / 2 + 0.05, z: 3.4 },
+          { x: -busWidth / 2 - 0.05, z: -2.4 },
+          { x: busWidth / 2 + 0.05, z: -2.4 },
+          { x: -busWidth / 2 - 0.05, z: -3.8 },
+          { x: busWidth / 2 + 0.05, z: -3.8 },
+        ];
+        wheelPositions.forEach((wp) => {
+          const w = new THREE.Mesh(wheelGeo, hubcapMat);
+          w.position.set(wp.x, 0.48, wp.z);
+          w.castShadow = true;
+          carGroup.add(w);
+          wheels.push(w);
+        });
+      } else if (type === 'van') {
         // Delivery Box Van
         const vanBodyMat = new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.4 });
         const cabGeo = new THREE.BoxGeometry(2.3, 1.6, 2.2);
@@ -576,43 +661,51 @@ export class TrafficSystem {
 
       // Headlights at front (+Z)
       const headGeo = new THREE.BoxGeometry(0.35, 0.16, 0.08);
-      for (const hx of [-0.75, 0.75]) {
+      const hlZ = type === 'bus' ? 5.42 : type === 'van' ? 2.92 : 2.3;
+      const hlY = type === 'bus' ? 0.95 : 0.82;
+      for (const hx of [-0.85, 0.85]) {
         const hl = new THREE.Mesh(headGeo, headlightMat);
-        hl.position.set(hx, 0.82, type === 'van' ? 2.92 : 2.3);
+        hl.position.set(hx, hlY, hlZ);
         carGroup.add(hl);
       }
 
       // Taillights at rear (-Z)
       const tailGeo = new THREE.BoxGeometry(0.35, 0.16, 0.08);
-      for (const tx of [-0.75, 0.75]) {
+      const tlZ = type === 'bus' ? -5.42 : type === 'van' ? -2.82 : -2.3;
+      const tlY = type === 'bus' ? 0.95 : 0.82;
+      for (const tx of [-0.85, 0.85]) {
         const tl = new THREE.Mesh(tailGeo, taillightMat.clone());
-        tl.position.set(tx, 0.82, type === 'van' ? -2.82 : -2.3);
+        tl.position.set(tx, tlY, tlZ);
         carGroup.add(tl);
         taillights.push(tl);
       }
 
       // Amber Blinkers
       const blinkGeo = new THREE.BoxGeometry(0.12, 0.1, 0.12);
+      const bZFront = type === 'bus' ? 5.3 : 2.2;
+      const bZRear = type === 'bus' ? -5.3 : -2.2;
+      const bX = type === 'bus' ? 1.38 : 1.0;
+
       const bLeftF = new THREE.Mesh(blinkGeo, blinkerMat.clone());
-      bLeftF.position.set(-1.0, 0.82, 2.2);
+      bLeftF.position.set(-bX, hlY, bZFront);
       bLeftF.visible = false;
       carGroup.add(bLeftF);
       leftBlinkers.push(bLeftF);
 
       const bLeftR = new THREE.Mesh(blinkGeo, blinkerMat.clone());
-      bLeftR.position.set(-1.0, 0.82, -2.2);
+      bLeftR.position.set(-bX, hlY, bZRear);
       bLeftR.visible = false;
       carGroup.add(bLeftR);
       leftBlinkers.push(bLeftR);
 
       const bRightF = new THREE.Mesh(blinkGeo, blinkerMat.clone());
-      bRightF.position.set(1.0, 0.82, 2.2);
+      bRightF.position.set(bX, hlY, bZFront);
       bRightF.visible = false;
       carGroup.add(bRightF);
       rightBlinkers.push(bRightF);
 
       const bRightR = new THREE.Mesh(blinkGeo, blinkerMat.clone());
-      bRightR.position.set(1.0, 0.82, -2.2);
+      bRightR.position.set(bX, hlY, bZRear);
       bRightR.visible = false;
       carGroup.add(bRightR);
       rightBlinkers.push(bRightR);
@@ -629,13 +722,15 @@ export class TrafficSystem {
       };
     };
 
-    // Fleet configuration
-    const vehicleTypes: ('taxi' | 'police' | 'sedan' | 'van')[] = [
+    // Fleet configuration including city transit buses
+    const vehicleTypes: ('taxi' | 'police' | 'sedan' | 'van' | 'bus')[] = [
       'taxi',
+      'bus',
       'sedan',
       'taxi',
       'police',
       'sedan',
+      'bus',
       'van',
       'taxi',
       'sedan',

@@ -111,3 +111,18 @@ export interface RingCheckpoint {
   normal: [number, number, number];
   collected: boolean;
 }
+
+export type GraphicsQualityPreset = 'low' | 'balanced' | 'high' | 'ultra';
+
+export interface GPUInfo {
+  vendor: string;
+  renderer: string;
+  isDedicated: boolean;
+}
+
+export interface GraphicsSettings {
+  preset: GraphicsQualityPreset;
+  renderScale: number; // 0.75, 1.0, 1.25, 1.5, 2.0
+  shadows: boolean;
+  drawDistance: number;
+}

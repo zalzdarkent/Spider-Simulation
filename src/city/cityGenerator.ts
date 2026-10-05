@@ -6,6 +6,14 @@ import { PedestrianSystem } from './pedestrianSystem';
 import { createRoadNetwork } from './roadNetwork';
 import { createAvengersTower } from './avengersTower';
 import { createWaterSystem } from './waterSystem';
+import { createMetroTrainSystem } from './metroTrainSystem';
+import {
+  createMetroHospital,
+  createCommercialMall,
+  createDailyBugleBuilding,
+  createOscorpTower,
+  createFinancialTwinTowers,
+} from './specialFacilities';
 import { CityObstacles } from '../physics/swingPhysics';
 
 export interface BuildingData {
@@ -261,6 +269,24 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   // Avengers Tower coordinate: Midtown Manhattan
   const avengersBlock = { ix: 4, iz: 3 };
 
+  // Metro General Hospital & Trauma Center (Healthcare facility with ER & Helipad)
+  const hospitalBlock = { ix: 3, iz: 6 };
+
+  // Grand Metropolis Plaza & Shopping Mall (Commercial Retail & Atrium)
+  const mallBlock = { ix: 6, iz: 4 };
+
+  // Daily Bugle Building (Art-deco skyscraper with rotating globe and red neon)
+  const dailyBugleBlock = { ix: 5, iz: 3 };
+
+  // Oscorp Corporate Tower (High-tech emerald green glass spire)
+  const oscorpBlock = { ix: 3, iz: 4 };
+
+  // Financial District Twin Towers & Skybridge
+  const financialTowersBlock = { ix: 6, iz: 2 };
+
+  // Callbacks for dynamic landmark animations (e.g. rotating Daily Bugle globe)
+  const facilityUpdates: ((dt: number, time: number) => void)[] = [];
+
   // Calculate avenue (N-S) and street (E-W) coordinates
   const avenues: number[] = [];
   const streets: number[] = [];
@@ -365,7 +391,62 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
         continue;
       }
 
-      // 3. Regular Skyscraper generation
+      // 3. Healthcare Infrastructure: Metro General Hospital & Emergency Trauma Center
+      if (ix === hospitalBlock.ix && iz === hospitalBlock.iz) {
+        const hospital = createMetroHospital(cx, cz, buildingTextures);
+        group.add(hospital.group);
+        buildings.push(...hospital.buildings);
+        buildingMeshes.push(...hospital.buildingMeshes);
+        rooftopAnchors.push(...hospital.rooftopAnchors);
+        if (hospital.update) facilityUpdates.push(hospital.update);
+        continue;
+      }
+
+      // 4. Commercial Infrastructure: Grand Metropolis Plaza & Shopping Mall
+      if (ix === mallBlock.ix && iz === mallBlock.iz) {
+        const mall = createCommercialMall(cx, cz, buildingTextures);
+        group.add(mall.group);
+        buildings.push(...mall.buildings);
+        buildingMeshes.push(...mall.buildingMeshes);
+        rooftopAnchors.push(...mall.rooftopAnchors);
+        if (mall.update) facilityUpdates.push(mall.update);
+        continue;
+      }
+
+      // 5. Office / News Headquarters: The Daily Bugle Building
+      if (ix === dailyBugleBlock.ix && iz === dailyBugleBlock.iz) {
+        const dailyBugle = createDailyBugleBuilding(cx, cz, buildingTextures);
+        group.add(dailyBugle.group);
+        buildings.push(...dailyBugle.buildings);
+        buildingMeshes.push(...dailyBugle.buildingMeshes);
+        rooftopAnchors.push(...dailyBugle.rooftopAnchors);
+        if (dailyBugle.update) facilityUpdates.push(dailyBugle.update);
+        continue;
+      }
+
+      // 6. Corporate High-Tech Spire: Oscorp Industries Tower
+      if (ix === oscorpBlock.ix && iz === oscorpBlock.iz) {
+        const oscorp = createOscorpTower(cx, cz, buildingTextures);
+        group.add(oscorp.group);
+        buildings.push(...oscorp.buildings);
+        buildingMeshes.push(...oscorp.buildingMeshes);
+        rooftopAnchors.push(...oscorp.rooftopAnchors);
+        if (oscorp.update) facilityUpdates.push(oscorp.update);
+        continue;
+      }
+
+      // 7. Corporate Financial District: Financial Twin Towers & High-Altitude Skybridge
+      if (ix === financialTowersBlock.ix && iz === financialTowersBlock.iz) {
+        const finTowers = createFinancialTwinTowers(cx, cz, buildingTextures);
+        group.add(finTowers.group);
+        buildings.push(...finTowers.buildings);
+        buildingMeshes.push(...finTowers.buildingMeshes);
+        rooftopAnchors.push(...finTowers.rooftopAnchors);
+        if (finTowers.update) facilityUpdates.push(finTowers.update);
+        continue;
+      }
+
+      // 8. Regular Skyscraper generation
       const distFromCenter = Math.sqrt(cx * cx + cz * cz);
       const centerFactor = Math.max(0.3, 1.0 - distFromCenter / 550);
 
@@ -627,7 +708,18 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   });
   group.add(streetPropsResult.group);
 
-  // Generate Dynamic Traffic Fleet (Taxis, Police Cruisers, Sedans, Delivery Vans, Parked Cars)
+  // Generate Elevated Metro Railway, Viaduct, Stations & Commuter Train
+  const metroTrain = createMetroTrainSystem({
+    avenueX: avenues[3] ?? -104,
+    minZ: streets.length > 0 ? streets[0] - 25 : -450,
+    maxZ: streets.length > 0 ? streets[streets.length - 1] + 25 : 450,
+    timeOfDay,
+  });
+  group.add(metroTrain.group);
+  buildings.push(...metroTrain.buildings);
+  buildingMeshes.push(...metroTrain.buildingMeshes);
+
+  // Generate Dynamic Traffic Fleet (Taxis, Buses, Police Cruisers, Sedans, Delivery Vans, Parked Cars)
   const trafficSystem = new TrafficSystem({
     timeOfDay,
     avenues,
@@ -658,7 +750,14 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
 
   const obstacles: CityObstacles = {
     staticColliders,
-    getVehicleColliders: () => trafficSystem.getColliders(),
+    getVehicleColliders: () => {
+      const colliders = trafficSystem.getColliders();
+      const trainBox = metroTrain.getTrainRoofBox();
+      if (trainBox) {
+        colliders.push({ box: trainBox, isMoving: true });
+      }
+      return colliders;
+    },
     getPedestrianColliders: () => pedestrianSystem.getColliders(),
     isWaterAt: (x, z) => waterSystem.isWaterAt(x, z),
     getWaterLevel: (x, z) => waterSystem.getWaterLevel(x, z),
@@ -667,6 +766,8 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
   const update = (dt: number, time: number, heroPosition?: THREE.Vector3) => {
     updateRings(time);
     waterSystem.update(time);
+    metroTrain.update(dt, time, heroPosition);
+    facilityUpdates.forEach((fn) => fn(dt, time));
     trafficSystem.update(dt);
     pedestrianSystem.update(dt, heroPosition);
   };

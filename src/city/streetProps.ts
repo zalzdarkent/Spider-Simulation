@@ -305,11 +305,36 @@ export class StreetPropsGenerator {
       backGlass.position.set(0, 1.3, -0.9);
       shelter.add(backGlass);
 
-      // Side illuminated digital ad panel
+      // Wooden waiting bench inside shelter
+      const sBenchGeo = new THREE.BoxGeometry(2.4, 0.42, 0.55);
+      const sBench = new THREE.Mesh(sBenchGeo, benchWoodMat);
+      sBench.position.set(0, 0.25, -0.45);
+      shelter.add(sBench);
+
+      // Side illuminated digital transit map / ad panel
       const adGeo = new THREE.BoxGeometry(0.08, 1.8, 1.6);
       const adMesh = new THREE.Mesh(adGeo, busAdMat);
       adMesh.position.set(1.5, 1.3, 0);
       shelter.add(adMesh);
+
+      // Bus Stop Pole Sign (Tall steel pole with round transit emblem)
+      const poleGeo = new THREE.CylinderGeometry(0.05, 0.05, 3.2, 8);
+      const pole = new THREE.Mesh(poleGeo, metalDarkMat);
+      pole.position.set(-2.2, 1.6, 0.6);
+      shelter.add(pole);
+
+      const signDiscGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.06, 16);
+      signDiscGeo.rotateZ(Math.PI / 2);
+      const signDiscMat = new THREE.MeshBasicMaterial({ color: 0x0284c7 });
+      const signDisc = new THREE.Mesh(signDiscGeo, signDiscMat);
+      signDisc.position.set(-2.2, 2.9, 0.6);
+      shelter.add(signDisc);
+
+      const routePlaqueGeo = new THREE.BoxGeometry(0.06, 0.35, 0.6);
+      const routePlaqueMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc });
+      const routePlaque = new THREE.Mesh(routePlaqueGeo, routePlaqueMat);
+      routePlaque.position.set(-2.2, 2.45, 0.6);
+      shelter.add(routePlaque);
 
       colliders.push({
         type: 'box',

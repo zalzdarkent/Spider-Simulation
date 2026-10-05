@@ -292,7 +292,7 @@ class ModelManager {
     if (armR) {
       handR = new THREE.Object3D();
       handR.name = 'SpiderMan_Right_WebShooter';
-      handR.position.set(2.85, 3.35, 0.25);
+      handR.position.set(1.41, 4.54, 0.75);
       armR.add(handR);
     }
 
@@ -300,7 +300,7 @@ class ModelManager {
     if (armL) {
       handL = new THREE.Object3D();
       handL.name = 'SpiderMan_Left_WebShooter';
-      handL.position.set(-2.85, 3.35, 0.25);
+      handL.position.set(-1.41, 4.54, 0.75);
       armL.add(handL);
     }
 
