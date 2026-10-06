@@ -42,10 +42,12 @@ class ModelManager {
   private spidermanTemplate: THREE.Group | null = null;
   private carTemplate: THREE.Group | null = null;
   private npcTemplate: THREE.Group | null = null;
+  private starkTowerTemplate: THREE.Group | null = null;
 
   public isSpidermanLoaded = false;
   public isCarLoaded = false;
   public isNpcLoaded = false;
+  public isStarkTowerLoaded = false;
 
   private listeners: (() => void)[] = [];
   private loadPromise: Promise<void> | null = null;
@@ -56,7 +58,7 @@ class ModelManager {
 
   public onModelsLoaded(listener: () => void) {
     this.listeners.push(listener);
-    if (this.isSpidermanLoaded && this.isCarLoaded && this.isNpcLoaded) {
+    if (this.isSpidermanLoaded && this.isCarLoaded && this.isNpcLoaded && this.isStarkTowerLoaded) {
       listener();
     }
   }
@@ -79,6 +81,7 @@ class ModelManager {
         this.loadSpiderman(),
         this.loadCar(),
         this.loadNpc(),
+        this.loadStarkTower(),
       ]);
       this.notify();
     })();
@@ -210,6 +213,98 @@ class ModelManager {
         }
       );
     });
+  }
+
+  private loadStarkTower(): Promise<void> {
+    return new Promise((resolve) => {
+      const tryLoad = (url: string, fallbackUrl?: string) => {
+        this.loader.load(
+          url,
+          (gltf) => {
+            const root = gltf.scene;
+
+            // Normalize Stark Tower root:
+            // Natural root bounds: min [-45.25, -0.28, -1.13], max [-35.69, 21.40, 5.93]
+            // Center in X is at -40.47, in Z at 2.40, bottom base is at -0.28.
+            root.position.set(40.469875, 0.279376, -2.39804);
+
+            const wrapper = new THREE.Group();
+            wrapper.name = 'StarkTower_GLB_Template';
+            wrapper.add(root);
+            wrapper.updateMatrixWorld(true);
+
+            // Configure shadows, tags, and rich architectural materials
+            wrapper.traverse((obj) => {
+              if ((obj as THREE.Mesh).isMesh) {
+                const m = obj as THREE.Mesh;
+                m.castShadow = true;
+                m.receiveShadow = true;
+                m.userData = { isBuilding: true, isStarkTower: true };
+
+                if (m.material) {
+                  const mats = Array.isArray(m.material) ? m.material : [m.material];
+                  mats.forEach((mat) => {
+                    mat.depthWrite = true;
+                    if ('roughness' in mat) {
+                      const std = mat as THREE.MeshStandardMaterial;
+                      // Cyan Stark arc-reactor glass & illuminated window meshes
+                      if (m.name.includes('010') || (std.color && std.color.getHex() === 0x00eeff)) {
+                        std.color = new THREE.Color(0x38bdf8);
+                        std.emissive = new THREE.Color(0x0284c7);
+                        std.emissiveIntensity = 0.85;
+                        std.roughness = 0.15;
+                        std.metalness = 0.85;
+                      } else {
+                        std.roughness = Math.min(std.roughness, 0.45);
+                        std.metalness = Math.max(std.metalness, 0.35);
+                      }
+                    }
+                  });
+                }
+              }
+            });
+
+            this.starkTowerTemplate = wrapper;
+            this.isStarkTowerLoaded = true;
+            this.notify();
+            resolve();
+          },
+          undefined,
+          (err) => {
+            if (fallbackUrl) {
+              tryLoad(fallbackUrl);
+            } else {
+              console.warn('Failed to load stark_tower.glb:', err);
+              resolve();
+            }
+          }
+        );
+      };
+
+      tryLoad('/models/stark_tower.glb', '/src/model/stark_tower.glb');
+    });
+  }
+
+  /**
+   * Spawns a high-fidelity Stark Tower 3D model instance.
+   */
+  public createStarkTowerInstance(): THREE.Group | null {
+    if (!this.starkTowerTemplate) return null;
+    const clone = this.starkTowerTemplate.clone(true);
+    clone.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const m = obj as THREE.Mesh;
+        m.userData = { isBuilding: true, isStarkTower: true };
+        if (m.material) {
+          if (Array.isArray(m.material)) {
+            m.material = m.material.map((mat) => mat.clone());
+          } else {
+            m.material = m.material.clone();
+          }
+        }
+      }
+    });
+    return clone;
   }
 
   /**

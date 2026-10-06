@@ -12,7 +12,7 @@ interface HUDProps {
   hudMode: 'minimal' | 'full';
   isMuted: boolean;
   onToggleMute: () => void;
-  onOpenSettings: (initialTab?: 'controls' | 'telemetry' | 'physics' | 'environment' | 'tutorial') => void;
+  onOpenSettings: (initialTab?: 'controls' | 'graphics' | 'telemetry' | 'physics' | 'environment' | 'tutorial') => void;
   onReset: () => void;
   isLookingBehind?: boolean;
   onToggleLookBehind?: () => void;
@@ -61,16 +61,23 @@ export const HUD: React.FC<HUDProps> = ({
     <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-5 overflow-hidden select-none">
       {/* Top Header Bar */}
       <header className="flex items-center justify-between pointer-events-auto">
-        {/* Left: Minimalist Brand Badge */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-slate-900/80 border border-slate-800/80 backdrop-blur-md shadow-lg shadow-black/20">
+        {/* Left: Minimalist Brand Badge (Click to open Graphics / GPU Settings) */}
+        <button
+          onClick={() => onOpenSettings('graphics')}
+          title="Buka Pengaturan Grafis & Panduan GPU Dedicated"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-slate-900/80 hover:bg-slate-800/90 border border-slate-800/80 hover:border-sky-500/50 backdrop-blur-md shadow-lg shadow-black/20 transition-all cursor-pointer group"
+        >
           <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
           <h1 className="text-xs sm:text-sm font-black tracking-wider text-white font-['Chakra_Petch']">
             WEBSWING
           </h1>
-          <span className="text-[10px] text-slate-400 font-mono hidden sm:inline">
+          <span className="text-[10px] text-slate-400 group-hover:text-sky-300 font-mono hidden sm:inline">
             · {telemetry.fps} FPS
           </span>
-        </div>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono hidden md:inline border border-sky-500/30">
+            GPU
+          </span>
+        </button>
 
         {/* Center: Contextual Action Prompt Pill */}
         {telemetry.hasTargetLock && !telemetry.isAttached ? (

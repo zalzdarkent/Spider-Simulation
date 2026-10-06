@@ -1888,7 +1888,8 @@ export class WebSwingScene {
       if (debugInfo) {
         const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) || 'Unknown';
         const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) || 'WebGL';
-        const isDedicated = /nvidia|geforce|rtx|gtx|radeon\s*rx|quadro|discrete|dedicated/i.test(renderer);
+        const isIntelOrBasic = /intel|uhd|iris|hd graphics|basic render|microsoft direct3d|software/i.test(renderer);
+        const isDedicated = !isIntelOrBasic && /nvidia|geforce|rtx|gtx|radeon\s*rx|radeon\s*pro|discrete|dedicated|apple\s*m\d+\s*(pro|max)/i.test(renderer);
         return { vendor, renderer, isDedicated };
       }
     } catch (e) {
@@ -1913,6 +1914,7 @@ export class WebSwingScene {
   public setShadowsEnabled(enabled: boolean) {
     this.shadowsEnabled = enabled;
     this.renderer.shadowMap.enabled = enabled;
+    this.renderer.shadowMap.autoUpdate = enabled;
     if (this.dirLight) {
       this.dirLight.castShadow = enabled;
     }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TimeOfDay, GameMode, PhysicsConfig, PHYSICS_PRESETS, PresetName, TelemetryData } from '../types/physics';
+import { TimeOfDay, GameMode, PhysicsConfig, PHYSICS_PRESETS, PresetName, TelemetryData, GPUInfo, GraphicsSettings, GraphicsQualityPreset } from '../types/physics';
 import {
   Settings,
   X,
@@ -27,10 +27,14 @@ import {
   Car,
   Users,
   Trees,
+  Cpu,
+  Monitor,
+  AlertTriangle,
+  ExternalLink,
 } from 'lucide-react';
 import { EnergyGraph } from './EnergyGraph';
 
-export type SettingsTab = 'controls' | 'telemetry' | 'physics' | 'environment' | 'tutorial';
+export type SettingsTab = 'controls' | 'graphics' | 'telemetry' | 'physics' | 'environment' | 'tutorial';
 
 interface SettingsModalProps {
   timeOfDay: TimeOfDay;
@@ -70,6 +74,12 @@ interface SettingsModalProps {
   onResetPlayer: () => void;
   initialTab?: SettingsTab;
   onClose: () => void;
+  gpuInfo?: GPUInfo;
+  graphicsSettings?: GraphicsSettings;
+  onChangeGraphicsPreset?: (preset: GraphicsQualityPreset) => void;
+  onChangeShadows?: (enabled: boolean) => void;
+  onChangeRenderScale?: (scale: number) => void;
+  onChangeDrawDistance?: (dist: number) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -110,6 +120,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onResetPlayer,
   initialTab = 'controls',
   onClose,
+  gpuInfo = { vendor: 'WebGL Standard', renderer: 'Detecting GPU...', isDedicated: false },
+  graphicsSettings = { preset: 'balanced', renderScale: 1.0, shadows: true, drawDistance: 850 },
+  onChangeGraphicsPreset,
+  onChangeShadows,
+  onChangeRenderScale,
+  onChangeDrawDistance,
 }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
@@ -131,6 +147,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
     { id: 'controls', label: 'Kontrol & Kamera', icon: MousePointer },
+    { id: 'graphics', label: 'Grafis & GPU (Lag Fix)', icon: Cpu },
     { id: 'telemetry', label: 'Informasi & STEM', icon: Activity },
     { id: 'physics', label: 'Mesin Fisika', icon: Sliders },
     { id: 'environment', label: 'Suasana & Mode', icon: Sun },
@@ -417,6 +434,244 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       R
                     </kbd>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: GRAFIS & GPU (PERFORMA & LAG FIX) */}
+          {activeTab === 'graphics' && (
+            <div className="space-y-6">
+              {/* Card 1: Detected GPU Hardware Status */}
+              <div className="p-5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-4">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/30">
+                      <Cpu className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-mono text-slate-400 uppercase tracking-wider">
+                        Hardware Grafis Aktif (Browser WebGL)
+                      </div>
+                      <div className="text-base sm:text-lg font-bold text-white font-mono">
+                        {gpuInfo.renderer}
+                      </div>
+                      <div className="text-xs text-slate-400">
+                        Vendor: <span className="text-slate-300">{gpuInfo.vendor}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {gpuInfo.isDedicated ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-bold font-mono">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                        GPU DEDICATED (NVIDIA / AMD) AKTIF
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-bold font-mono">
+                        <AlertTriangle className="w-4 h-4 text-amber-400" />
+                        GPU INTEGRATED / CPU (INTEL / AMD iGPU)
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Explanation Alert for Integrated GPU users */}
+                {!gpuInfo.isDedicated && (
+                  <div className="p-4 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-2">
+                    <div className="flex items-center gap-2 text-amber-300 font-bold text-xs uppercase tracking-wider">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400" />
+                      Kenapa GPU Dedicated NVIDIA / AMD Anda Belum Terpakai?
+                    </div>
+                    <p className="text-xs text-amber-200/90 leading-relaxed">
+                      Secara default di laptop dengan 2 GPU (Intel/AMD CPU + NVIDIA/AMD dGPU), sistem operasi Windows
+                      mengatur browser web (Google Chrome / Edge) ke mode <strong>&quot;Hemat Daya&quot; (Power saving)</strong>.
+                      Hal ini membuat browser hanya memakai GPU bawaan prosesor sehingga game 3D terasa berat/lag dan GPU
+                      dedicated Anda tetap 0%.
+                    </p>
+                    <p className="text-xs text-amber-300 font-semibold">
+                      👉 Ikuti panduan 4 langkah di bawah ini untuk memaksa Windows memakai GPU Dedicated Anda, atau gunakan preset &quot;iGPU 60 FPS&quot; agar langsung lancar seketika!
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Card 2: 1-Click Instant Graphics & Performance Presets */}
+              <div className="p-5 rounded-2xl bg-slate-800/40 border border-slate-700/60 space-y-4">
+                <div>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-sky-400" />
+                    Pilihan Preset Kualitas Grafis (Ganti Kualitas / FPS)
+                  </h3>
+                  <p className="text-xs text-slate-300 mt-1">
+                    Jika game terasa patah-patah, klik <strong>&quot;iGPU 60 FPS&quot;</strong> untuk mematikan beban bayangan berat dan mengunci 60 FPS mulus.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {/* Preset 1: Low / iGPU */}
+                  <button
+                    onClick={() => onChangeGraphicsPreset?.('low')}
+                    className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-3 ${
+                      graphicsSettings.preset === 'low'
+                        ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-lg shadow-emerald-500/10'
+                        : 'bg-slate-900/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black font-mono tracking-wider text-emerald-400">
+                          HEMAT / iGPU
+                        </span>
+                        {graphicsSettings.preset === 'low' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-400 text-slate-950 font-bold">
+                            AKTIF
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm font-bold mt-1">60 FPS Lancar</div>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Bayangan dimatikan, resolusi native 1.0x, jarak pandang 650m. Sangat ringan untuk GPU bawaan Intel / AMD.
+                      </p>
+                    </div>
+                    <div className="text-[10px] font-mono text-emerald-300/80">
+                      Rekomendasi Laptop tanpa dGPU
+                    </div>
+                  </button>
+
+                  {/* Preset 2: Balanced */}
+                  <button
+                    onClick={() => onChangeGraphicsPreset?.('balanced')}
+                    className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-3 ${
+                      graphicsSettings.preset === 'balanced'
+                        ? 'bg-sky-500/20 border-sky-400 text-white shadow-lg shadow-sky-500/10'
+                        : 'bg-slate-900/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black font-mono tracking-wider text-sky-400">
+                          SEIMBANG
+                        </span>
+                        {graphicsSettings.preset === 'balanced' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-400 text-slate-950 font-bold">
+                            AKTIF
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm font-bold mt-1">Standar Manhattan</div>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Bayangan halus 512px, resolusi 1.0x, jarak pandang 850m. Keseimbangan grafis dan performa.
+                      </p>
+                    </div>
+                    <div className="text-[10px] font-mono text-sky-300/80">
+                      Standar Default
+                    </div>
+                  </button>
+
+                  {/* Preset 3: High / Dedicated GPU */}
+                  <button
+                    onClick={() => onChangeGraphicsPreset?.('high')}
+                    className={`p-4 rounded-xl border text-left transition-all flex flex-col justify-between gap-3 ${
+                      graphicsSettings.preset === 'high'
+                        ? 'bg-purple-500/20 border-purple-400 text-white shadow-lg shadow-purple-500/10'
+                        : 'bg-slate-900/80 border-slate-700/70 text-slate-300 hover:text-white hover:border-slate-600'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black font-mono tracking-wider text-purple-400">
+                          GRAFIS TINGGI
+                        </span>
+                        {graphicsSettings.preset === 'high' && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-400 text-slate-950 font-bold">
+                            AKTIF
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-sm font-bold mt-1">NVIDIA / AMD dGPU</div>
+                      <p className="text-[11px] text-slate-400 mt-1">
+                        Bayangan tajam 1024px, resolusi supersampling 1.25x, jarak pandang 1000m. Visual gedung & Stark Tower maksimal.
+                      </p>
+                    </div>
+                    <div className="text-[10px] font-mono text-purple-300/80">
+                      Untuk GPU Dedicated
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Card 3: Step-by-Step Windows Graphics Setting Guide */}
+              <div className="p-5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-4">
+                <div className="flex items-center gap-2">
+                  <Monitor className="w-5 h-5 text-sky-400" />
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wider font-['Chakra_Petch']">
+                    Panduan: Cara Mengaktifkan GPU Dedicated (NVIDIA / AMD) di Windows
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-300">
+                  Ikuti 4 langkah cepat ini agar Google Chrome atau Microsoft Edge otomatis menggunakan kartu grafis NVIDIA RTX/GTX atau AMD Radeon Anda:
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-sky-300">
+                      <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center font-mono text-xs">
+                        1
+                      </span>
+                      Buka Pengaturan Grafis Windows
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      Tekan tombol <strong>Windows + I</strong> di keyboard &gt; pilih <strong>System</strong> &gt; <strong>Display</strong> &gt; lalu scroll ke bawah dan klik <strong>Graphics</strong> (atau ketik &quot;Graphics settings&quot; di kolom pencarian Windows).
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-sky-300">
+                      <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center font-mono text-xs">
+                        2
+                      </span>
+                      Pilih Browser Anda (Chrome / Edge)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      Cari <strong>Google Chrome</strong> atau <strong>Microsoft Edge</strong> pada daftar. Jika belum muncul, klik tombol <strong>Browse</strong> dan cari file <code className="text-sky-300">chrome.exe</code> di <code className="text-slate-300">C:\Program Files\Google\Chrome\Application\chrome.exe</code>.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-sky-300">
+                      <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center font-mono text-xs">
+                        3
+                      </span>
+                      Set ke &quot;High Performance&quot; (GPU Dedicated)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      Klik nama browser &gt; klik tombol <strong>Options</strong> &gt; pilih opsi <strong>High performance</strong> (akan tertera nama GPU NVIDIA / AMD Anda) &gt; klik <strong>Save</strong>.
+                    </p>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1.5">
+                    <div className="flex items-center gap-2 font-bold text-sky-300">
+                      <span className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center font-mono text-xs">
+                        4
+                      </span>
+                      Tutup &amp; Buka Ulang Browser (Restart)
+                    </div>
+                    <p className="text-slate-400 leading-relaxed text-[11px]">
+                      Tutup seluruh jendela browser lalu buka kembali halaman game ini. Status GPU di atas akan otomatis berubah menjadi <strong>GPU Dedicated (NVIDIA / AMD) Aktif</strong> dengan performa maksimal!
+                    </p>
+                  </div>
+                </div>
+
+                {/* Additional Note for NVIDIA Control Panel */}
+                <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] text-slate-400 flex items-start gap-2.5">
+                  <span className="font-bold text-emerald-400 uppercase tracking-wider shrink-0">
+                    Tips NVIDIA:
+                  </span>
+                  <span>
+                    Pengguna laptop NVIDIA juga bisa membuka <strong>NVIDIA Control Panel</strong> &gt; <strong>Manage 3D Settings</strong> &gt; <strong>Program Settings</strong> &gt; pilih <strong>Google Chrome</strong> &gt; atur preferred graphics processor ke <strong>High-performance NVIDIA processor</strong>.
+                  </span>
                 </div>
               </div>
             </div>

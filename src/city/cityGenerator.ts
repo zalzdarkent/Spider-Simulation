@@ -601,10 +601,10 @@ export function generateCity(timeOfDay: 'sunset' | 'night' | 'day' | 'foggy' = '
     }
   }
 
-  // Waypoints for aerial web-swinging ring challenges: through avenues, Central Park Lake, and Avengers Tower!
+  // Waypoints for aerial web-swinging ring challenges: through avenues, Central Park Lake, and Stark Tower!
   const courseWaypoints: [number, number, number][] = [
     [0, 36, -60],
-    [-52, 218, -156], // Avengers Tower Helipad pass!
+    [-49, 242, -139], // Stark Tower Helipad pass!
     [-104, 85, -50],
     [-208, 62, 50],
     [-104, 52, 120],

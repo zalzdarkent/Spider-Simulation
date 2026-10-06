@@ -787,6 +787,12 @@ export default function App() {
           }}
           initialTab={settingsTab}
           onClose={() => setIsSettingsOpen(false)}
+          gpuInfo={sceneRef.current?.getGPUInfo()}
+          graphicsSettings={sceneRef.current?.getGraphicsSettings()}
+          onChangeGraphicsPreset={(preset) => sceneRef.current?.setGraphicsPreset(preset)}
+          onChangeShadows={(enabled) => sceneRef.current?.setShadowsEnabled(enabled)}
+          onChangeRenderScale={(scale) => sceneRef.current?.setRenderScale(scale)}
+          onChangeDrawDistance={(dist) => sceneRef.current?.setDrawDistance(dist)}
         />
       )}
     </main>
